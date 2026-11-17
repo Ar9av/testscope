@@ -8,9 +8,10 @@ def test_moves_and_comments_are_not_changes():
     assert fp(moved)["funcs"] == fp(BASE)["funcs"]
 
 
-def test_class_attribute_is_module_level():
+def test_class_attribute_is_keyed_by_name():
     a, b = fp(BASE), fp(BASE.replace("x = 1", "x = 2"))
-    assert a["module"] != b["module"] and a["funcs"] == b["funcs"]
+    changed = {k for k in a["stmts"] if a["stmts"][k] != b["stmts"].get(k)}
+    assert changed == {"n:C.x"} and a["funcs"] == b["funcs"]
 
 
 def test_decorator_is_part_of_the_function():

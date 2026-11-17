@@ -1,12 +1,13 @@
 """Map a change (current tree vs the recorded baseline) to the tests it can affect."""
 from __future__ import annotations
 
+import ast
 import fnmatch
 import json
 import os
 from collections import defaultdict
 
-from .fingerprint import import_graph, snapshot
+from .fingerprint import file_imports, module_index, module_statements, referenced_names, snapshot
 
 # A change to any of these can change every test's behavior: run everything.
 FULL_RUN = ["pyproject.toml", "setup.py", "setup.cfg", "tox.ini", "pytest.ini", "noxfile.py",
@@ -15,14 +16,16 @@ FULL_RUN = ["pyproject.toml", "setup.py", "setup.cfg", "tox.ini", "pytest.ini", 
 IGNORE = ["*.md", "*.rst", "docs/*", "LICENSE*", "CHANGELOG*", ".github/*", "*.png", "*.jpg", "*.svg", "*.gif"]
 
 MAP_DIR = ".testscope"
+MAP_VERSION = 2
 
 
 def load_map(root: str) -> dict | None:
     try:
         with open(os.path.join(root, MAP_DIR, "map.json")) as fh:
-            return json.load(fh)
+            m = json.load(fh)
     except (OSError, ValueError):
         return None
+    return m if m.get("version") == MAP_VERSION else None
 
 
 def _match(rel: str, pats) -> bool:
@@ -51,10 +54,48 @@ class Selection:
         return None
 
 
+class _Src:
+    """Lazily parsed current sources, plus who imports whom."""
+
+    def __init__(self, root, snap):
+        self.root, self.snap = root, snap
+        self.mods = module_index(snap)
+        self._trees: dict[str, tuple] = {}
+        self._importers: dict[str, dict[str, set[str]]] | None = None
+
+    def tree(self, rel):
+        if rel not in self._trees:
+            try:
+                src = open(os.path.join(self.root, rel), encoding="utf-8", errors="replace").read()
+                self._trees[rel] = (ast.parse(src), src.splitlines(keepends=True))
+            except (OSError, SyntaxError, ValueError):
+                self._trees[rel] = (None, [])
+        return self._trees[rel]
+
+    def importers(self, rel) -> dict[str, set[str]]:
+        """files that import rel directly -> names they take from it."""
+        if self._importers is None:
+            self._importers = defaultdict(dict)
+            for g in self.snap:
+                if g.endswith(".py"):
+                    t, _ = self.tree(g)
+                    if t is not None:
+                        for f, names in file_imports(g, t, self.mods).items():
+                            self._importers[f][g] = names
+        return self._importers.get(rel, {})
+
+
+def _split_key(key):
+    """'n:C.a,b' -> ('C.', {'a','b'})"""
+    rest = key[2:]
+    scope, _, names = rest.rpartition(".")
+    return (scope + "." if scope else ""), set(names.split(","))
+
+
 def compute(root: str, m: dict, snap: dict | None = None) -> Selection:
     sel = Selection()
     base = m["snap"]
-    snap = snapshot(root) if snap is None else snap
+    snap = snapshot(root, base) if snap is None else snap
     changed = sorted(f for f in set(base) | set(snap)
                      if base.get(f, {}).get("sha") != snap.get(f, {}).get("sha"))
     sel.changed = changed
@@ -66,8 +107,7 @@ def compute(root: str, m: dict, snap: dict | None = None) -> Selection:
             return sel
 
     deps, tests = m["deps"], m["tests"]
-    # dep index -> tests that hold it
-    users: dict[int, list[str]] = defaultdict(list)
+    users: dict[int, list[str]] = defaultdict(list)  # dep id -> tests holding it
     for nid, ids in tests.items():
         for i in ids:
             users[i].append(nid)
@@ -84,54 +124,104 @@ def compute(root: str, m: dict, snap: dict | None = None) -> Selection:
         elif kind == "d":
             lists[rest] = i
     test_files = {nid.split("::", 1)[0] for nid in tests}
-    graph = None
+    src = _Src(root, snap)
 
     def add(nids, why):
         for n in nids:
             sel.tests.setdefault(n, why)
 
+    def code_users(f, pred, why):
+        for q, i in by_file.get(f, ()):
+            if pred(q):
+                add(users[i], why)
+
+    def func_changed(f, qual, why):  # recorded qualname q ran inside qual (nested, lambdas)
+        code_users(f, lambda q: q == qual or q.startswith(qual + "."), why)
+
+    names_todo: list[tuple[str, set[str], str]] = []  # (file, changed names, why)
+
     for f in sel.changed:
-        old, new = base.get(f), snap.get(f)
+        old, new = base.get(f) or {}, snap.get(f) or {}
         hit_before = len(sel.tests) + len(sel.paths)
         if f.endswith(".py"):
-            ofn, nfn = (old or {}).get("funcs", {}), (new or {}).get("funcs", {})
-            changed_q = {q for q in set(ofn) | set(nfn) if ofn.get(q) != nfn.get(q)}
-            module = old is None or new is None or old.get("module") != new.get("module")
-            for q, i in by_file.get(f, ()):
-                if module or any(q == c or q.startswith(c + ".") for c in changed_q):
-                    add(users[i], f"{f}::{q} changed" if not module else f"{f} module-level change")
-            if module:
-                if os.path.basename(f) == "conftest.py":
-                    sel.paths[os.path.dirname(f) or "."] = f"{f} changed"
-                if f in test_files or (new is None and old is not None):
-                    sel.paths[f] = f"{f} changed"
-                if graph is None:
-                    graph = _reverse(import_graph(root, {**base, **snap}))
-                for imp in _importers(graph, f):
-                    if imp in test_files:
-                        sel.paths.setdefault(imp, f"imports {f} (module-level change)")
+            ofn, nfn = old.get("funcs", {}), new.get("funcs", {})
+            for q in set(ofn) | set(nfn):
+                if ofn.get(q) != nfn.get(q):
+                    func_changed(f, q, f"{f}::{q} changed")
+            ost, nst = old.get("stmts", {}), new.get("stmts", {})
+            for key in set(ost) | set(nst):
+                if ost.get(key) == nst.get(key):
+                    continue
+                if key.startswith("x:"):  # binds nothing (bare call, docstring): anything in f
+                    why = f"{f}: module-level code changed"
+                    code_users(f, lambda q: True, why)
+                    if f in test_files:
+                        sel.paths[f] = why
+                    if os.path.basename(f) == "conftest.py":
+                        sel.paths[os.path.dirname(f) or "."] = why
+                    continue
+                scope, names = _split_key(key)
+                why = f"{f}: {scope}{','.join(sorted(names))} changed"
+                if scope:  # class attribute: tests that used the class
+                    code_users(f, lambda q, c=scope: q.startswith(c), why)
+                names_todo.append((f, names, why))
         if f in reads:
             add(users[reads[f]], f"{f} read by test")
-        if (old is None or new is None) and os.path.dirname(f) in lists:
+        if (not old or not new) and os.path.dirname(f) in lists:
             add(users[lists[os.path.dirname(f)]], f"{f} added/removed in a listed dir")
         if len(sel.tests) + len(sel.paths) == hit_before and not f.endswith(".py") and not _match(f, IGNORE):
             sel.unobserved.append(f)
+
+    _propagate(names_todo, src, test_files, func_changed, code_users)
     return sel
 
 
-def _reverse(graph):
-    rev: dict[str, set[str]] = defaultdict(set)
-    for f, ds in graph.items():
-        for d in ds:
-            rev[d].add(f)
-    return rev
-
-
-def _importers(rev, f):
-    seen, todo = set(), [f]
+def _propagate(todo, src, test_files, func_changed, code_users):
+    """A changed name selects code that reads it: in its own file, and in files that
+    import it. Module-level statements that read it make their own names changed too."""
+    seen: set[tuple[str, str]] = set()
     while todo:
-        for g in rev.get(todo.pop(), ()):
-            if g not in seen:
-                seen.add(g)
-                todo.append(g)
-    return seen
+        f, names, why = todo.pop()
+        names = {n for n in names if (f, n) not in seen}
+        if not names:
+            continue
+        seen |= {(f, n) for n in names}
+        cands = {f: None, **src.importers(f)}  # None: same file, every reference counts
+        if os.path.basename(f) == "conftest.py":  # fixtures reach tests by parameter name
+            d = os.path.dirname(f)
+            cands.update({t: None for t in test_files if not d or t.startswith(d + "/")})
+        for g, taken in cands.items():
+            tree, lines = src.tree(g)
+            if tree is None:
+                continue
+            via_from = names if taken is None or "*" in taken else names & taken
+
+            def reads(node):
+                bare, attr = referenced_names(node)
+                return (bare & via_from) | (attr & names)
+
+            for qual, node in _functions(tree):
+                if reads(node):
+                    func_changed(g, qual, why)
+            for key, node, _text in module_statements(tree, lines):
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    continue
+                target = ast.Module(body=node.bases + node.keywords + node.decorator_list, type_ignores=[]) \
+                    if isinstance(node, ast.ClassDef) else node
+                if not reads(target):
+                    continue
+                if isinstance(node, ast.ClassDef):  # base class / decorator changed
+                    code_users(g, lambda q, c=node.name + ".": q.startswith(c), why)
+                    continue
+                if key.startswith("x:"):
+                    code_users(g, lambda q: True, why)
+                    continue
+                todo.append((g, _split_key(key)[1], why))
+
+
+def _functions(tree, prefix=""):
+    for node in tree.body if isinstance(tree, ast.Module) else tree:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            yield prefix + node.name, node
+        elif isinstance(node, ast.ClassDef):
+            yield from _functions(node.body, prefix + node.name + ".")

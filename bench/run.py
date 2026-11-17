@@ -11,12 +11,23 @@ repo, muts, out = Path(sys.argv[1]), json.loads(Path(sys.argv[2]).read_text()), 
 selectors = dict(s.split("=", 1) for s in sys.argv[4:])
 junit = Path(__file__).parent / "junit.xml"
 MUTANT = 'raise RuntimeError("TIA_MUTANT")'
+TIMEOUT = 900  # a normal full run is ~4 min; a mutant that hangs the suite is skipped
+START = int(os.environ.get("START", "0"))
 
 
 def failing_files():
-    subprocess.run([sys.executable, "-m", "pytest", "-q", "-n", "12", "-p", "no:cacheprovider",
-                    "-p", "no:testmon", f"--junitxml={junit}", "tests"],
-                   cwd=repo, capture_output=True, timeout=1800, env={**os.environ, "TESTSCOPE": "off"})
+    if junit.exists():
+        junit.unlink()
+    proc = subprocess.Popen([sys.executable, "-m", "pytest", "-q", "-n", "12", "-p", "no:cacheprovider",
+                             "-p", "no:testmon", f"--junitxml={junit}", "tests"], cwd=repo,
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True,
+                            env={**os.environ, "TESTSCOPE": "off"})
+    try:
+        proc.wait(timeout=TIMEOUT)
+    except subprocess.TimeoutExpired:
+        os.killpg(proc.pid, 9)  # xdist workers too
+        proc.wait()
+        raise
     bad = set()
     for tc in ET.parse(junit).getroot().iter("testcase"):
         if tc.find("failure") is not None or tc.find("error") is not None:
@@ -37,20 +48,26 @@ def apply(m):
     src = p.read_text()
     if m["kind"] == "py":
         lines = src.splitlines(keepends=True)
-        lines.insert(m["line"] - 1, " " * m["col"] + MUTANT + "\n")
+        lines.insert(m["line"] - 1, " " * m["col"] + m.get("text", MUTANT) + "\n")
         p.write_text("".join(lines))
     else:
         p.write_text("%%TIA_MUTANT%%{[\n")
 
 
-baseline = failing_files()
+baseline = set(json.loads(os.environ["BASELINE"])) if "BASELINE" in os.environ else failing_files()
 print("baseline failures:", sorted(baseline), flush=True)
 with out.open("a") as fh:
-    for m in muts:
+    for m in muts[START:]:
         apply(m)
         try:
             t = time.time()
-            truth = failing_files() - baseline
+            try:
+                truth = failing_files() - baseline
+            except subprocess.TimeoutExpired:
+                m["skipped"] = "full suite hung"
+                fh.write(json.dumps(m) + "\n")
+                print(m["file"], m.get("func", ""), "SKIPPED (hang)", flush=True)
+                continue
             m["truth"], m["full_s"] = sorted(truth), round(time.time() - t, 1)
             m["sel"] = {}
             for name, cmd in selectors.items():

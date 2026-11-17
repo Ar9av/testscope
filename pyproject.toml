@@ -10,7 +10,16 @@ readme = "README.md"
 requires-python = ">=3.9"
 license = "Apache-2.0"
 dependencies = ["pytest>=7"]
-classifiers = ["Framework :: Pytest"]
+keywords = ["pytest", "test impact analysis", "regression test selection", "ai agents", "claude code", "ci"]
+classifiers = [
+    "Framework :: Pytest",
+    "Programming Language :: Python :: 3",
+    "Topic :: Software Development :: Testing",
+]
+
+[project.urls]
+Homepage = "https://github.com/Ar9av/testscope"
+Issues = "https://github.com/Ar9av/testscope/issues"
 
 [project.entry-points.pytest11]
 testscope = "testscope.plugin"

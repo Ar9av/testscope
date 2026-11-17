@@ -60,7 +60,8 @@ def pytest_configure(config):
     m = _sel.load_map(root)
     if m is None:
         if config.getoption("testscope") or os.environ.get("TESTSCOPE") == "on":
-            raise pytest.UsageError("testscope: no map. Run `pytest --testscope-record` first (or fetch it from CI).")
+            raise pytest.UsageError("testscope: no map for this version. Run `pytest --testscope-record` "
+                                   "first (or fetch it from CI).")
         return
     config.pluginmanager.register(_Select(config, root, m), "testscope-select")
 
@@ -79,6 +80,20 @@ class _Select:
         self.failed_before = _lastfailed(root)
         self.ran, self.failed, self.passed = 0, set(), set()
         self.why: dict[str, str] = {}
+        # Test files with nothing selected are never imported (collection is most of the
+        # cost on a big suite). New files, unknown to the map, are always collected.
+        self.known_files = {n.split("::", 1)[0] for n in m["tests"]}
+        self.keep_files = {n.split("::", 1)[0] for n in list(self.sel.tests) + list(self.failed_before)}
+
+    def pytest_ignore_collect(self, collection_path, config):
+        if self.sel.full or not collection_path.is_file():
+            return None
+        rel = os.path.relpath(str(collection_path), self.root)
+        if rel not in self.known_files or rel in self.keep_files:
+            return None
+        if any(rel == p or rel.startswith(p.rstrip("/") + "/") or p == "." for p in self.sel.paths):
+            return None
+        return True
 
     def pytest_report_header(self, config):
         s = self.sel
@@ -241,7 +256,7 @@ class _Record:
                                     text=True).stdout.strip()
         except OSError:
             commit = ""
-        m = {"version": 1, "created": int(time.time()), "commit": commit,
+        m = {"version": _sel.MAP_VERSION, "created": int(time.time()), "commit": commit,
              "python": sys.version.split()[0], "snap": snapshot(self.root),
              "deps": sorted(deps, key=deps.get), "tests": tests}
         with open(os.path.join(d, "map.json"), "w") as fh:

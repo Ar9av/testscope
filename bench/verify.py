@@ -18,7 +18,7 @@ def apply(m):
     p = repo / m["file"]
     if m["kind"] == "py":
         lines = p.read_text().splitlines(keepends=True)
-        lines.insert(m["line"] - 1, " " * m["col"] + MUTANT + "\n")
+        lines.insert(m["line"] - 1, " " * m["col"] + m.get("text", MUTANT) + "\n")
         p.write_text("".join(lines))
     else:
         p.write_text("%%TIA_MUTANT%%{[\n")

@@ -21,6 +21,23 @@ FILES = {
             return open(os.path.join(os.path.dirname(__file__), "data.yaml")).read()
     """,
     "pkg/data.yaml": "k: v\n",
+    "pkg/b.py": """
+        from pkg.a import CONST
+        LIMIT = CONST * 2
+        def h():
+            return LIMIT
+    """,
+    "tests/conftest.py": """
+        import pytest
+        @pytest.fixture
+        def fx():
+            return 7
+    """,
+    "tests/test_y.py": """
+        from pkg import b
+        def test_h(): assert b.h() == 6
+        def test_fx(fx): assert fx == 7
+    """,
     "tests/test_x.py": """
         import subprocess, sys
         from pkg import a
@@ -43,7 +60,7 @@ def proj(pytester):
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(textwrap.dedent(src))
     r = pytester.runpytest_subprocess("--testscope-record", "-p", "no:cacheprovider")
-    r.assert_outcomes(passed=6)
+    r.assert_outcomes(passed=8)
     return pytester
 
 
@@ -60,7 +77,11 @@ def edit(p, path, old, new):
 
 
 def ids(*names):
-    return {f"tests/test_x.py::{n}" for n in names}
+    return {n if "::" in n else f"tests/test_x.py::{n}" for n in names}
+
+
+ALL = {"test_f", "test_g", "test_data", "test_const", "test_sub", "test_none",
+       "tests/test_y.py::test_h", "tests/test_y.py::test_fx"}
 
 
 def test_nothing_changed(proj):
@@ -82,14 +103,30 @@ def test_data_file(proj):
     assert selected(proj) == ids("test_data")
 
 
-def test_module_level_constant(proj):
+def test_module_level_constant_follows_readers(proj):
+    # test_const reads a.CONST; b.LIMIT is derived from it at import time; test_h reads LIMIT.
     edit(proj, "pkg/a.py", "CONST = 3", "CONST = 4")
-    assert ids("test_const") <= selected(proj)
+    assert selected(proj) == ids("test_const", "tests/test_y.py::test_h")
+
+
+def test_adding_import_or_function_selects_nothing(proj):
+    edit(proj, "pkg/a.py", "import os", "import os\nimport json\ndef new():\n    return json")
+    assert selected(proj) == set()
+
+
+def test_removing_a_function_selects_its_callers(proj):
+    edit(proj, "pkg/a.py", "def g():\n    return 2\n", "")
+    assert selected(proj) == ids("test_g", "test_sub")
+
+
+def test_fixture_change_and_new_fixture(proj):
+    edit(proj, "tests/conftest.py", "return 7", "return 8")
+    assert selected(proj) == ids("tests/test_y.py::test_fx")
 
 
 def test_config_change_runs_everything(proj):
     edit(proj, "pyproject.toml", "pythonpath", "# x\npythonpath")
-    assert selected(proj) == ids("test_f", "test_g", "test_data", "test_const", "test_sub", "test_none")
+    assert selected(proj) == ids(*ALL)
 
 
 def test_last_failed_is_rerun(proj):
