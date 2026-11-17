@@ -1,0 +1,38 @@
+# testscope in CI.
+#   main:   full run that also records the map, saved to the Actions cache.
+#   PRs:    restore the newest map from main, run only affected tests.
+#   nightly / merge queue: plain full run, the safety net for anything selection misses.
+name: tests
+on:
+  push: { branches: [main] }
+  pull_request:
+  merge_group:
+  schedule: [{ cron: "0 3 * * *" }]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -e ".[dev]" testscope pytest-xdist
+
+      # main: record (no measurable overhead) and publish the map
+      - if: github.event_name == 'push'
+        run: pytest -n auto --testscope-record
+      - if: github.event_name == 'push'
+        uses: actions/cache/save@v4
+        with: { path: .testscope/map.json, key: "testscope-${{ github.sha }}" }
+
+      # PRs: newest map from main (caches from the default branch are visible to PRs)
+      - if: github.event_name == 'pull_request'
+        uses: actions/cache/restore@v4
+        with: { path: .testscope/map.json, key: "testscope-none", restore-keys: "testscope-" }
+      - if: github.event_name == 'pull_request'
+        run: |
+          if [ -f .testscope/map.json ]; then pytest -n auto --testscope; else pytest -n auto; fi
+
+      # merge queue + nightly: everything
+      - if: github.event_name == 'merge_group' || github.event_name == 'schedule'
+        run: pytest -n auto

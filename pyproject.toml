@@ -1,0 +1,19 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "testscope"
+version = "0.1.0"
+description = "Run only the tests a change can affect. Built for AI coding agents and CI."
+readme = "README.md"
+requires-python = ">=3.9"
+license = "Apache-2.0"
+dependencies = ["pytest>=7"]
+classifiers = ["Framework :: Pytest"]
+
+[project.entry-points.pytest11]
+testscope = "testscope.plugin"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/testscope"]
