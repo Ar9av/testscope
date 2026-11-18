@@ -26,18 +26,37 @@ On a real 6,195-test project, over its last 30 commits:
 
 Method, caveats and raw data: [`bench/RESULTS.md`](bench/RESULTS.md).
 
-```bash
-pip install testscope
-pytest --testscope-record      # once (or in CI on main): full run + dependency map
-# ... edit code ...
-pytest --testscope             # only affected tests
-```
+## Quick start
 
-When Claude Code runs pytest (it sets `CLAUDECODE=1`) and a map exists, selection turns
-on automatically. The agent needs no new command and no hook. For other agents, export
-`TESTSCOPE=on` in their environment.
-`TESTSCOPE=off pytest` always runs everything. Explicit targets
+1. Install it as a dev dependency: `pip install testscope` (or `uv add --dev testscope`).
+2. Add `.testscope/` to `.gitignore`. The map is local state; do not commit it.
+3. Record the map once. This is one full run (Python 3.12+):
+
+   ```bash
+   pytest --testscope-record
+   ```
+
+4. Edit code, then run only the affected tests:
+
+   ```bash
+   pytest --testscope
+   ```
+
+The header line `testscope: ...` tells you what was selected and why.
+`.testscope/last-selection.json` gives the reason for each test.
+
+**Agents.** When an agent runs pytest and a map exists, selection turns on by itself. The
+agent needs no new command and no hook. testscope detects Claude Code (`CLAUDECODE`),
+Codex (`CODEX_SANDBOX`, `CODEX_THREAD_ID`), Cursor (`CURSOR_AGENT`) and Gemini CLI
+(`GEMINI_CLI`). For other agents, set `TESTSCOPE=on` in their environment.
+
+**Always:** `TESTSCOPE=off pytest` runs everything. Named targets
 (`pytest tests/test_x.py::test_y`) are never narrowed.
+
+**Set it up with an agent.** Tell your coding agent: *"Set up testscope in this repo,
+following https://github.com/Ar9av/testscope/blob/master/AGENTS.md"*. That file has the
+steps, the checks, and a block of text to add to your project's own `AGENTS.md` /
+`CLAUDE.md`.
 
 A git worktree with no map of its own uses the main checkout's map. When a change forces a
 full run (a config or lockfile changed), testscope records a fresh map during that run, so
