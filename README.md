@@ -39,6 +39,11 @@ on automatically. The agent needs no new command and no hook. For other agents, 
 `TESTSCOPE=off pytest` always runs everything. Explicit targets
 (`pytest tests/test_x.py::test_y`) are never narrowed.
 
+A git worktree with no map of its own uses the main checkout's map. When a change forces a
+full run (a config or lockfile changed), testscope records a fresh map during that run, so
+the next run is narrow again. A run that covers less than 90% of the old map's tests (`-k`,
+`-x`, a subdirectory) keeps the old map. `TESTSCOPE_AUTORECORD=off` turns this off.
+
 ## What it tracks
 
 | Dependency | How | testmon | import graph |

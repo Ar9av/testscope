@@ -48,6 +48,8 @@ def load_map(root: str) -> dict | None:
         except (OSError, ValueError):
             continue
         if m.get("version") == MAP_VERSION:
+            if base != root:
+                m["_from"] = base
             return m
     return None
 

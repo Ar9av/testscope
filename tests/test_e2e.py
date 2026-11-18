@@ -244,3 +244,37 @@ def test_fail_first_order():
            "tests/d.py::t": "pkg/data.yaml references pkg/x.yaml"}
     assert order_files(why, {"tests/b.py::t": 5.0, "tests/e.py::t": 0.1}) == [
         "tests/c.py", "tests/e.py", "tests/b.py", "tests/d.py", "tests/a.py"]
+
+
+def test_full_run_refreshes_the_map(proj):
+    edit(proj, "pyproject.toml", "pythonpath", "# x\npythonpath")
+    r = proj.runpytest_subprocess("--testscope", "-p", "no:cacheprovider")
+    r.stdout.fnmatch_lines(["*recording a fresh map*", "*recorded 9 tests*"])
+    assert selected(proj) == set()  # the config change is now in the map
+    edit(proj, "pkg/a.py", "return 1", "return 5")
+    assert ids("test_f") <= selected(proj)
+
+
+def test_partial_full_run_keeps_the_old_map(proj):
+    before = (proj.path / ".testscope/map.json").read_text()
+    edit(proj, "pyproject.toml", "pythonpath", "# x\npythonpath")
+    r = proj.runpytest_subprocess("--testscope", "-p", "no:cacheprovider", "-k", "test_h")
+    r.stdout.fnmatch_lines(["*map not refreshed*1 of 9*"])
+    assert (proj.path / ".testscope/map.json").read_text() == before
+
+
+def test_autorecord_off(proj, monkeypatch):
+    monkeypatch.setenv("TESTSCOPE_AUTORECORD", "off")
+    before = (proj.path / ".testscope/map.json").read_text()
+    edit(proj, "pyproject.toml", "pythonpath", "# x\npythonpath")
+    assert selected(proj) == ids(*ALL)
+    assert (proj.path / ".testscope/map.json").read_text() == before
+
+
+def test_full_run_refreshes_the_map_under_xdist(proj):
+    pytest.importorskip("xdist")
+    edit(proj, "pyproject.toml", "pythonpath", "# x\npythonpath")
+    r = proj.runpytest_subprocess("--testscope", "-p", "no:cacheprovider", "-n", "2")
+    r.stdout.fnmatch_lines(["*recorded 9 tests*"])
+    edit(proj, "pkg/a.py", "return 1", "return 5")
+    assert ids("test_f") <= selected(proj) < ids(*ALL)

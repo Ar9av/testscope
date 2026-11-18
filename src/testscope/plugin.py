@@ -4,6 +4,7 @@
   pytest --testscope           run only tests the change since the baseline can affect
   TESTSCOPE=on|off|auto        auto (default) selects when an AI agent runs pytest
                                (CLAUDECODE / CODEX_* in env) and a map exists
+  TESTSCOPE_AUTORECORD=off     don't refresh the map when a change forces a full run
 """
 from __future__ import annotations
 
@@ -71,7 +72,12 @@ def pytest_configure(config):
             raise pytest.UsageError("testscope: no map for this version. Run `pytest --testscope-record` "
                                    "first (or fetch it from CI).")
         return
-    config.pluginmanager.register(_Select(config, root, m), "testscope-select")
+    sel = _sel.compute(root, m)
+    if sel.full and sys.version_info >= (3, 12) and os.environ.get("TESTSCOPE_AUTORECORD") != "off":
+        # Everything runs anyway: record on the way, so the next run is narrow again.
+        config.pluginmanager.register(_Record(config, root, replaces=m, sel=sel), "testscope-record")
+        return
+    config.pluginmanager.register(_Select(config, root, m, sel), "testscope-select")
 
 
 def _lastfailed(root):
@@ -82,9 +88,9 @@ def _lastfailed(root):
 
 
 class _Select:
-    def __init__(self, config, root, m):
+    def __init__(self, config, root, m, sel):
         self.config, self.root, self.map = config, root, m
-        self.sel = _sel.compute(root, m)
+        self.sel = sel
         self.failed_before = _lastfailed(root)
         self.ran, self.failed, self.passed = 0, set(), set()
         self.why: dict[str, str] = {}
@@ -107,7 +113,8 @@ class _Select:
         s = self.sel
         if s.full:
             return f"testscope: full run — {s.full}"
-        return (f"testscope: {len(s.changed)} changed file(s) since map {self.map.get('commit', '')[:10]}; "
+        src = f" (from {self.map['_from']})" if self.map.get("_from") else ""
+        return (f"testscope: {len(s.changed)} changed file(s) since map {self.map.get('commit', '')[:10]}{src}; "
                 f"running affected tests only (TESTSCOPE=off for all)")
 
     def pytest_collection_modifyitems(self, config, items):
@@ -256,10 +263,16 @@ def _ai_suggest(root, sel, backend):
 
 
 class _Record:
-    def __init__(self, config, root):
+    # An automatic re-record that covers fewer tests than this share of the old map
+    # (a -k filter, -x, a subdirectory) is partial: keep the old map instead.
+    MIN_SHARE = 0.9
+
+    def __init__(self, config, root, replaces=None, sel=None):
         from .recorder import Recorder
 
         self.config, self.root = config, root
+        self.replaces, self.sel = replaces, sel
+        self.why = sel.full if sel else None
         self.rec = Recorder(root)
         self.rec.install()
         self.deps: dict[str, int] = {}
@@ -332,8 +345,13 @@ class _Record:
         names = sorted(self.deps, key=self.deps.get)
         return {"deps": names, "tests": {k: sorted(v) for k, v in self.tests.items()}, "dur": self.dur}
 
+    def pytest_report_header(self, config):
+        if self.why:
+            return f"testscope: full run — {self.why}; recording a fresh map on the way"
+
     def pytest_sessionfinish(self, session):
         d = os.path.join(self.root, _sel.MAP_DIR)
+        os.makedirs(d, exist_ok=True)
         wid = getattr(self.config, "workerinput", {}).get("workerid")
         if wid:
             with open(os.path.join(d, f"shard-{wid}.json"), "w") as fh:
@@ -351,6 +369,16 @@ class _Record:
             dur.update(sh.get("dur", {}))
             for nid, ids in sh["tests"].items():
                 tests[nid] = sorted({deps.setdefault(sh["deps"][i], len(deps)) for i in ids})
+        say = session.config.pluginmanager.get_plugin("terminalreporter").write_line
+        if self.sel:
+            with open(os.path.join(d, "last-selection.json"), "w") as fh:
+                json.dump({"changed": self.sel.changed, "unobserved": self.sel.unobserved, "full": self.why,
+                           "selected": {n: self.why for n in tests}}, fh, indent=1)
+        if self.replaces is not None and len(tests) < self.MIN_SHARE * len(self.replaces.get("tests", ())):
+            shutil.rmtree(os.path.join(d, "tmp"), ignore_errors=True)
+            say(f"testscope: full run ({self.why}); map not refreshed: this run covered "
+                f"{len(tests)} of {len(self.replaces['tests'])} tests. Run `pytest --testscope-record` on the whole suite.")
+            return
         try:
             commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=self.root, capture_output=True,
                                     text=True).stdout.strip()
@@ -366,5 +394,5 @@ class _Record:
         shutil.rmtree(os.path.join(d, "tmp"), ignore_errors=True)
         with open(os.path.join(d, "lastfailed.json"), "w") as fh:
             json.dump(sorted(self.failed), fh)
-        session.config.pluginmanager.get_plugin("terminalreporter").write_line(
-            f"testscope: recorded {len(tests)} tests, {len(deps)} deps -> {_sel.MAP_DIR}/map.json")
+        say((f"testscope: full run ({self.why}); " if self.why else "testscope: ")
+            + f"recorded {len(tests)} tests, {len(deps)} deps -> {_sel.MAP_DIR}/map.json")
