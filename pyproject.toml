@@ -9,6 +9,7 @@ description = "Run only the tests a change can affect. Built for AI coding agent
 readme = "README.md"
 requires-python = ">=3.9"
 license = "Apache-2.0"
+authors = [{ name = "Ar9av" }]
 dependencies = ["pytest>=7"]
 keywords = ["pytest", "test impact analysis", "regression test selection", "ai agents", "claude code", "ci"]
 classifiers = [
