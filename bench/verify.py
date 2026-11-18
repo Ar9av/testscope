@@ -28,6 +28,8 @@ cache = {}
 with out.open("w") as fh:
     for line in res.read_text().splitlines():
         m = json.loads(line)
+        if "sel" not in m:  # skipped (suite hung)
+            continue
         files = sorted({f for s in m["sel"].values() for f in s["missed"]})
         verdict = {}
         for f in files:

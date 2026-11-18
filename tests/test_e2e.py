@@ -21,6 +21,8 @@ FILES = {
             return open(os.path.join(os.path.dirname(__file__), "data.yaml")).read()
     """,
     "pkg/data.yaml": "k: v\n",
+    "pkg/run.sh": "#!/bin/bash\nsource \"$(dirname \"$0\")/_lib.sh\"\necho \"$GREETING\"\n",
+    "pkg/_lib.sh": "GREETING=hi\n",
     "pkg/b.py": """
         from pkg.a import CONST
         LIMIT = CONST * 2
@@ -48,6 +50,9 @@ FILES = {
         def test_sub():
             subprocess.run([sys.executable, "-c", "from pkg import a; a.g()"], check=True)
         def test_none(): assert True
+        def test_sh():
+            out = subprocess.run(["bash", "pkg/run.sh"], capture_output=True, text=True).stdout
+            assert out.strip() == "hi"
     """,
     "pyproject.toml": "[tool.pytest.ini_options]\npythonpath = ['.']\n",
 }
@@ -60,13 +65,18 @@ def proj(pytester):
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(textwrap.dedent(src))
     r = pytester.runpytest_subprocess("--testscope-record", "-p", "no:cacheprovider")
-    r.assert_outcomes(passed=8)
+    r.assert_outcomes(passed=9)
     return pytester
 
 
-def selected(p):
-    r = p.runpytest_subprocess("--testscope", "-p", "no:cacheprovider")
-    return set(json.loads((p.path / ".testscope/last-selection.json").read_text())["selected"])
+def selected_raw(p):
+    p.runpytest_subprocess("--testscope", "-p", "no:cacheprovider")
+    return (p.path / ".testscope/last-selection.json").read_text()
+
+
+def selected(p, canaries=False):
+    sel = json.loads(selected_raw(p))["selected"]
+    return {n for n, why in sel.items() if canaries or "import canary" not in why}
 
 
 def edit(p, path, old, new):
@@ -80,7 +90,7 @@ def ids(*names):
     return {n if "::" in n else f"tests/test_x.py::{n}" for n in names}
 
 
-ALL = {"test_f", "test_g", "test_data", "test_const", "test_sub", "test_none",
+ALL = {"test_f", "test_g", "test_data", "test_const", "test_sub", "test_none", "test_sh",
        "tests/test_y.py::test_h", "tests/test_y.py::test_fx"}
 
 
@@ -98,6 +108,12 @@ def test_function_reached_only_in_subprocess(proj):
     assert selected(proj) == ids("test_g", "test_sub")
 
 
+def test_script_sourced_by_another_script(proj):
+    # bash reads _lib.sh, so no audit hook sees it; run.sh (which tests do run) names it.
+    edit(proj, "pkg/_lib.sh", "hi", "bye")
+    assert selected(proj) == ids("test_sh")
+
+
 def test_data_file(proj):
     edit(proj, "pkg/data.yaml", "k: v", "k: w")
     assert selected(proj) == ids("test_data")
@@ -109,9 +125,18 @@ def test_module_level_constant_follows_readers(proj):
     assert selected(proj) == ids("test_const", "tests/test_y.py::test_h")
 
 
-def test_adding_import_or_function_selects_nothing(proj):
+def test_adding_import_or_function_selects_only_import_canaries(proj):
     edit(proj, "pkg/a.py", "import os", "import os\nimport json\ndef new():\n    return json")
-    assert selected(proj) == set()
+    reasons = json.loads(selected_raw(proj))["selected"]
+    assert reasons and all("import canary" in r for r in reasons.values()) and len(reasons) <= 5
+
+
+def test_import_crash_is_caught(proj):
+    # CONST = None makes `CONST * 2` in pkg/b.py raise at import: no reader of CONST runs,
+    # but the canaries do, so the run fails instead of passing green.
+    edit(proj, "pkg/a.py", "CONST = 3", "CONST = 3\nBROKEN = 1 / 0")
+    r = proj.runpytest_subprocess("--testscope", "-p", "no:cacheprovider")
+    assert r.ret != 0
 
 
 def test_removing_a_function_selects_its_callers(proj):

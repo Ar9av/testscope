@@ -17,6 +17,7 @@ IGNORE = ["*.md", "*.rst", "docs/*", "LICENSE*", "CHANGELOG*", ".github/*", "*.p
 
 MAP_DIR = ".testscope"
 MAP_VERSION = 2
+CANARIES = 5
 
 
 def load_map(root: str) -> dict | None:
@@ -139,6 +140,7 @@ def compute(root: str, m: dict, snap: dict | None = None) -> Selection:
         code_users(f, lambda q: q == qual or q.startswith(qual + "."), why)
 
     names_todo: list[tuple[str, set[str], str]] = []  # (file, changed names, why)
+    canaries: list[str] = []
 
     for f in sel.changed:
         old, new = base.get(f) or {}, snap.get(f) or {}
@@ -149,6 +151,11 @@ def compute(root: str, m: dict, snap: dict | None = None) -> Selection:
                 if ofn.get(q) != nfn.get(q):
                     func_changed(f, q, f"{f}::{q} changed")
             ost, nst = old.get("stmts", {}), new.get("stmts", {})
+            if ost != nst:
+                # Any module-level edit can make the import itself raise, which breaks every
+                # importer whether or not it reads the changed name. A few tests that ran this
+                # module's import code surface that. ponytail: 5 canaries; raise if needed.
+                canaries.append(f)
             for key in set(ost) | set(nst):
                 if ost.get(key) == nst.get(key):
                     continue
@@ -173,7 +180,37 @@ def compute(root: str, m: dict, snap: dict | None = None) -> Selection:
             sel.unobserved.append(f)
 
     _propagate(names_todo, src, test_files, func_changed, code_users)
+    _referenced_data(root, [f for f in sel.changed if not f.endswith(".py")], reads, users, add)
+    for f in canaries:  # after real reasons, so those win in the report
+        ran_import = sorted({n for q, i in by_file.get(f, ()) if q == "<module>" for n in users[i]})
+        add(ran_import[:CANARIES], f"{f}: import canary (module-level change)")
     return sel
+
+
+def _referenced_data(root, changed, reads, users, add):
+    """Files no test opens directly (a script `source`d by another script, a config included
+    by another config) are reached through a file tests did read that names them."""
+    texts: dict[str, str] = {}
+
+    def text(rel):
+        if rel not in texts:
+            try:
+                with open(os.path.join(root, rel), "rb") as fh:
+                    b = fh.read(1 << 20)
+                texts[rel] = "" if b"\0" in b else b.decode("utf-8", "replace")
+            except OSError:
+                texts[rel] = ""
+        return texts[rel]
+
+    seen, todo = set(changed), list(changed)
+    while todo:
+        f = todo.pop()
+        name = os.path.basename(f)
+        for x, i in reads.items():
+            if x not in seen and name in text(x):
+                add(users[i], f"{x} references {f}")
+                seen.add(x)
+                todo.append(x)
 
 
 def _propagate(todo, src, test_files, func_changed, code_users):
