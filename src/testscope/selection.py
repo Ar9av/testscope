@@ -151,7 +151,8 @@ class _Src:
     def tree(self, rel):
         if rel not in self._trees:
             try:
-                src = open(os.path.join(self.root, rel), encoding="utf-8", errors="replace").read()
+                with open(os.path.join(self.root, rel), encoding="utf-8", errors="replace") as fh:
+                    src = fh.read()
                 self._trees[rel] = (ast.parse(src), src.splitlines(keepends=True))
             except (OSError, SyntaxError, ValueError):
                 self._trees[rel] = (None, [])

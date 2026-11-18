@@ -82,7 +82,8 @@ def pytest_configure(config):
 
 def _lastfailed(root):
     try:
-        return set(json.load(open(os.path.join(root, _sel.MAP_DIR, "lastfailed.json"))))
+        with open(os.path.join(root, _sel.MAP_DIR, "lastfailed.json")) as fh:
+            return set(json.load(fh))
     except (OSError, ValueError):
         return set()
 
@@ -328,7 +329,8 @@ class _Record:
                     os.environ[k] = v
             for name in os.listdir(out):
                 try:
-                    d = json.load(open(os.path.join(out, name)))
+                    with open(os.path.join(out, name)) as fh:
+                        d = json.load(fh)
                     ids |= self._ids([tuple(x) for x in d["funcs"]], d["files"], d["dirs"], d.get("pkgs", ()))
                 except (OSError, ValueError, KeyError):
                     pass
@@ -360,7 +362,8 @@ class _Record:
         shards = [self._shard()] if self.tests else []
         for name in sorted(os.listdir(d)):
             if name.startswith("shard-"):
-                shards.append(json.load(open(os.path.join(d, name))))
+                with open(os.path.join(d, name)) as fh:
+                    shards.append(json.load(fh))
                 os.remove(os.path.join(d, name))
         deps: dict[str, int] = {}
         tests: dict[str, list[int]] = {}

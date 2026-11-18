@@ -278,3 +278,20 @@ def test_full_run_refreshes_the_map_under_xdist(proj):
     r.stdout.fnmatch_lines(["*recorded 9 tests*"])
     edit(proj, "pkg/a.py", "return 1", "return 5")
     assert ids("test_f") <= selected(proj) < ids(*ALL)
+
+
+def test_no_resource_warnings_under_filterwarnings_error(pytester):
+    # Projects with filterwarnings=error turn any file testscope leaves open into a test error.
+    pytester.makepyprojecttoml("[tool.pytest.ini_options]\nfilterwarnings = ['error']\n")
+    pytester.makefile(".yaml", data="k: v\n")
+    pytester.makepyfile(m="def f():\n    return 1\n",
+                        test_m="from m import f\ndef test_f(): assert f() == 1\ndef test_g(): pass\n")
+    pytester.syspathinsert()
+    r = pytester.runpytest_subprocess("--testscope-record", "-p", "no:cacheprovider")
+    assert r.ret == 0, r.stdout.str()
+    edit(pytester, "m.py", "return 1", "return 2")
+    pytester.runpytest_subprocess("--testscope", "-p", "no:cacheprovider")  # test_f fails
+    edit(pytester, "m.py", "return 2", "return 1")
+    r = pytester.runpytest_subprocess("--testscope", "-p", "no:cacheprovider")  # reads lastfailed
+    r.assert_outcomes(passed=1)
+    assert r.ret == 0, r.stdout.str()

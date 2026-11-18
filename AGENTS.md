@@ -1,8 +1,8 @@
 # AGENTS.md — set up testscope in a repository
 
 These steps are for a coding agent (Claude Code, Codex, Cursor, Gemini CLI, Copilot, …)
-that must add testscope to a user's Python project. Do the steps in order. Each step has
-a check. Do not continue if a check fails: tell the user what failed.
+that must add testscope to a user's Python project. Do the steps in order. Each step
+has a check. Do not continue if a check fails: tell the user what failed.
 
 testscope is a pytest plugin. After one full recorded run, `pytest` runs only the tests
 that the current change can affect.
@@ -25,13 +25,22 @@ Add `testscope` as a **dev / test dependency**, with the tool the project alread
 | uv | `uv add --dev testscope` |
 | Poetry | `poetry add --group dev testscope` |
 | PDM | `pdm add -dG dev testscope` |
-| Hatch / optional-deps in `pyproject.toml` | add `"testscope"` to the `dev` or `test` extra |
+| optional-deps in `pyproject.toml` (Hatch, setuptools, …) | add `"testscope"` to the extra the tests use, whatever its name (`dev`, `test`, `tests`, …) |
 | `requirements-dev.txt` (or similar) | add a line `testscope` |
 | none of these | `pip install testscope` in the project's venv |
 
 Do not add it to the runtime dependencies.
 
-Check: `pytest --help | grep testscope` shows `--testscope` and `--testscope-record`.
+Then install the project's test environment the way its own test command does. If the
+project runs tests through `tox` or `nox`, read that file: install the same extras and
+deps, and run any commands it runs before pytest (for example a compile or codegen step).
+If you skip them, tests fail during recording for reasons that have nothing to do with
+testscope.
+
+Check: `pip show testscope` gives version **0.4.2 or later**, and
+`pytest --help | grep testscope` shows `--testscope` and `--testscope-record`. If the
+version is older, a package cache gave you a stale copy: reinstall with
+`uv pip install --refresh-package testscope testscope` or `pip install -U testscope`.
 
 ## 2. Ignore the map directory
 
@@ -43,45 +52,14 @@ Add this line to the project's `.gitignore`:
 
 The map is local state. Never commit it.
 
-## 3. Record the first map
+Check: `git check-ignore .testscope/map.json` prints the path.
 
-```bash
-pytest --testscope-record
-```
+## 3. Add instructions for agents that work in the project
 
-Use the same arguments the project normally uses (for example `pytest -n auto tests`).
-This is one full run of the suite, so it takes as long as a normal full run.
-If the suite takes more than about 2 minutes, run it in the background and wait for it to
-finish. Do not stop it part way: the map is written at the end.
+Do this **before** you record the map. A file that changes after recording shows as
+changed on every run until the next recording.
 
-Check: `.testscope/map.json` exists.
-
-Tests that fail during recording are fine. They are rerun first on the next run.
-
-## 4. Check that selection works
-
-Make no code change, then run:
-
-```bash
-pytest --testscope
-```
-
-Check: the header contains `testscope: ... running affected tests only`, and pytest runs
-few or no tests. If the header says `full run — <file> changed`, a config or lockfile is
-different from when the map was recorded. That run records a new map, so the next run is
-narrow.
-
-## 5. Turn it on for agents
-
-testscope turns on by itself when one of these variables is set in the environment and a
-map exists: `CLAUDECODE` (Claude Code), `CODEX_SANDBOX` or `CODEX_THREAD_ID` (Codex),
-`CURSOR_AGENT` (Cursor), `GEMINI_CLI` (Gemini CLI). For these agents, plain `pytest` is
-enough.
-
-For any other agent, set `TESTSCOPE=on` in that agent's environment. For example, put it in
-the agent's settings file, or in the shell profile that the agent uses.
-
-Then add this text to the project's agent instructions file (`AGENTS.md`, `CLAUDE.md`,
+Add this text to the project's agent instructions file (`AGENTS.md`, `CLAUDE.md`,
 `.cursor/rules`, `GEMINI.md`, or the file the project already has). Create `AGENTS.md`
 if the project has none:
 
@@ -89,7 +67,9 @@ if the project has none:
 ## Tests
 
 This project uses testscope. Run `pytest` as usual: it runs only the tests your change can
-affect. The header line that starts with `testscope:` tells you what was selected.
+affect. The header line that starts with `testscope:` tells you what was selected. The
+footer line `ran N of ~M tests` gives the real count (pytest's `collected` count is taken
+after testscope skips whole files, so it is not the suite size).
 
 - To run one test or file, name it (`pytest tests/test_x.py::test_y`). Named targets are
   never narrowed.
@@ -100,7 +80,63 @@ affect. The header line that starts with `testscope:` tells you what was selecte
 - Do not commit `.testscope/`.
 ```
 
-## 6. CI (only if the user asks for it)
+Check: the file contains the `## Tests` section.
+
+## 4. Record the first map
+
+```bash
+pytest --testscope-record
+```
+
+Use the arguments the project normally passes to pytest (for example `-n auto`, or a test
+path), but leave out coverage flags such as `--cov`: testscope has not been measured
+together with coverage.
+This is one full run of the suite, so it takes as long as a normal full run.
+If the suite takes more than about 2 minutes, run it in the background and wait for it to
+finish. Do not stop it part way: the map is written at the end.
+
+Check: the output has a line `testscope: recorded N tests, ... -> .testscope/map.json`, and
+`.testscope/map.json` exists.
+
+Tests that fail during recording are fine. They are rerun first on the next run. If pytest
+exits non-zero but every test passed, read the end of the output. If the error comes from a
+file under `testscope/`, it is a testscope bug: tell the user, and report it at
+https://github.com/Ar9av/testscope/issues.
+
+## 5. Check that selection works
+
+Make no code change, then run:
+
+```bash
+pytest --testscope
+```
+
+Check: the header contains `testscope: 0 changed file(s) since map ...`, pytest runs no
+tests (or only the tests that failed during recording), and the exit code is 0.
+
+If the header says `full run — <file> changed`, a config or lockfile is different from when
+the map was recorded. That run records a new map, so the next run is narrow. This also
+happens later, once, each time someone edits `pyproject.toml` or a lockfile.
+
+Optional, stronger check: change one line in a source function so that its tests should
+fail, run `pytest --testscope`, check that those tests fail and that the footer shows far
+fewer tests than the full suite, then undo the change.
+
+## 6. Turn it on for agents
+
+testscope turns on by itself when one of these variables is set in the environment and a
+map exists: `CLAUDECODE` (Claude Code), `CODEX_SANDBOX` or `CODEX_THREAD_ID` (Codex),
+`CURSOR_AGENT` (Cursor), `GEMINI_CLI` (Gemini CLI). For these agents, plain `pytest` is
+enough.
+
+For any other agent, set `TESTSCOPE=on` in that agent's environment. For example, put it in
+the agent's settings file, or in the shell profile that the agent uses.
+
+Check: in the agent's environment, plain `pytest` prints a header line that starts with
+`testscope:`. If it does not, the agent sets none of the variables above: set
+`TESTSCOPE=on`.
+
+## 7. CI (only if the user asks for it)
 
 Copy [`examples/github-actions.yml`](examples/github-actions.yml) to
 `.github/workflows/`. Change the install step and the pytest arguments to match the
@@ -145,5 +181,7 @@ The full CI run on merge and nightly is the safety net for these.
 | `--testscope-record needs Python 3.12+` | Record in a 3.12+ environment, or in CI. |
 | `no map for this version` | Run `pytest --testscope-record`. The map format changed or no map exists. |
 | Every run is a full run | A config file changed: `pyproject.toml`, `setup.py`, `setup.cfg`, `tox.ini`, `pytest.ini`, `noxfile.py`, `requirements*.txt`, `constraints*.txt`, `*.lock`, `Pipfile`, or `.python-version`. The full run records a new map. If `TESTSCOPE_AUTORECORD=off` is set, record again by hand. |
-| Plain `pytest` runs everything under an agent | The agent sets none of the variables in step 5. Set `TESTSCOPE=on`. |
+| Plain `pytest` runs everything under an agent | The agent sets none of the variables in step 6. Set `TESTSCOPE=on`. |
+| Every run exits 1 with `ResourceWarning: unclosed file` from `testscope/` | testscope 0.4.1 and older left files open, which breaks projects with `filterwarnings = error`. Upgrade to 0.4.2. |
+| A docs or instructions file shows as changed on every run | It changed after the map was recorded. It does not widen selection; record again to clear it. |
 | A git worktree has no map | It uses the main checkout's map. No action needed. |

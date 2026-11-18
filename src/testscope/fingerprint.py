@@ -147,7 +147,8 @@ def snapshot(root: str, base: dict | None = None) -> dict:
     base = base or {}
     for rel in repo_files(root):
         try:
-            data = open(os.path.join(root, rel), "rb").read()
+            with open(os.path.join(root, rel), "rb") as fh:
+                data = fh.read()
         except OSError:
             continue
         sha = _h(data)
