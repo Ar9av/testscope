@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "testscope"
-version = "0.2.1"
+version = "0.3.0"
 description = "Run only the tests a change can affect. Built for AI coding agents and CI."
 readme = "README.md"
 requires-python = ">=3.9"
