@@ -29,10 +29,11 @@ def _start():
     def flush():
         if not rec.active:
             return
-        funcs, files, dirs = rec.stop()
+        funcs, files, dirs, pkgs = rec.stop()
         try:
             with open(os.path.join(out, f"{os.getpid()}-{id(rec)}.json"), "w") as fh:
-                json.dump({"funcs": sorted(funcs), "files": sorted(files), "dirs": sorted(dirs)}, fh)
+                json.dump({"funcs": sorted(funcs), "files": sorted(files), "dirs": sorted(dirs),
+                           "pkgs": sorted(pkgs)}, fh)
         except OSError:
             pass
 

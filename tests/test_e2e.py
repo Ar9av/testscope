@@ -169,55 +169,78 @@ def test_nothing_affected_exits_zero(proj):
     assert r.ret == 0
 
 
-def test_ai_adds_files_and_caches(proj, monkeypatch, tmp_path_factory):
-    # Fake `claude` CLI: logs each call, always suggests test_y.py plus a path that is not a test.
-    bin_ = proj.path / "fakebin"
-    bin_.mkdir()
-    exe = bin_ / "claude"
-    exe.write_text("#!/bin/sh\ncat > /dev/null\necho x >> \"$TS_CALLS\"\n"
-                   "echo '{\"structured_output\": {\"add\": [\"tests/test_y.py\", \"nope.py\"]},"
-                   " \"usage\": {\"input_tokens\": 5, \"output_tokens\": 2}, \"total_cost_usd\": 0.001}'\n")
-    exe.chmod(0o755)
-    calls = tmp_path_factory.mktemp("calls") / "calls.txt"  # outside the project: not a change
-    monkeypatch.setenv("PATH", f"{bin_}:{__import__('os').environ['PATH']}")
-    monkeypatch.setenv("TS_CALLS", str(calls))
-    monkeypatch.setenv("TESTSCOPE_AI", "claude")
-    edit(proj, "pkg/a.py", "return 1", "return 1  # same\n    pass")
-    assert selected(proj) == ids("test_f", "tests/test_y.py::test_h", "tests/test_y.py::test_fx")
-    raw = json.loads((proj.path / ".testscope/last-selection.json").read_text())
-    assert raw["ai"]["add"] == ["tests/test_y.py"]
-    selected(proj)  # same change again: served from the cache
-    assert calls.read_text().count("x") == 1
 
-
-def test_ai_failure_never_fails_the_run(proj, monkeypatch):
-    bin_ = proj.path / "fakebin"
-    bin_.mkdir()
-    (bin_ / "claude").write_text("#!/bin/sh\necho boom >&2\nexit 1\n")
-    (bin_ / "claude").chmod(0o755)
-    monkeypatch.setenv("PATH", f"{bin_}:{__import__('os').environ['PATH']}")
-    monkeypatch.setenv("TESTSCOPE_AI", "claude")
-    edit(proj, "pkg/a.py", "return 1", "return 1  # same\n    pass")
-    r = proj.runpytest_subprocess("--testscope", "-p", "no:cacheprovider")
-    r.assert_outcomes(passed=1)
-    assert "ai: skipped" in r.stdout.str()
-
-
-def test_ai_without_map_picks_from_diff(pytester, monkeypatch, tmp_path_factory):
+def _no_map_project(pytester, monkeypatch, tmp_path_factory, claude_sh):
     import subprocess
     for path, src in FILES.items():
         p = pytester.path / path
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(textwrap.dedent(src))
-    bin_ = tmp_path_factory.mktemp("bin")
-    (bin_ / "claude").write_text("#!/bin/sh\ncat > /dev/null\n"
-                                 "echo '{\"structured_output\": {\"add\": [\"tests/test_y.py\"]}, \"usage\": {}}'\n")
+    bin_ = tmp_path_factory.mktemp("bin")  # outside the project: not a change
+    (bin_ / "claude").write_text(claude_sh)
     (bin_ / "claude").chmod(0o755)
     monkeypatch.setenv("PATH", f"{bin_}:{__import__('os').environ['PATH']}")
     monkeypatch.setenv("TESTSCOPE_AI", "claude")
     git = lambda *a: subprocess.run(["git", *a], cwd=pytester.path, check=True, capture_output=True)
     git("init", "-q"); git("add", "."); git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "x")
     edit(pytester, "pkg/b.py", "* 2", "* 2 + 0")
+    return bin_
+
+
+def test_ai_without_map_picks_from_diff_and_caches(pytester, monkeypatch, tmp_path_factory):
+    calls = tmp_path_factory.mktemp("calls") / "calls.txt"
+    monkeypatch.setenv("TS_CALLS", str(calls))
+    _no_map_project(pytester, monkeypatch, tmp_path_factory,
+                    "#!/bin/sh\ncat > /dev/null\necho x >> \"$TS_CALLS\"\n"
+                    "echo '{\"structured_output\": {\"add\": [\"tests/test_y.py\", \"nope.py\"]}, \"usage\": {}}'\n")
+    for _ in range(2):
+        r = pytester.runpytest_subprocess("-p", "no:cacheprovider")
+        r.assert_outcomes(passed=2)  # only tests/test_y.py; unknown paths are dropped
+        assert "picked by AI" in r.stdout.str()
+    assert calls.read_text().count("x") == 1  # second run served from the cache
+
+
+def test_ai_failure_runs_everything(pytester, monkeypatch, tmp_path_factory):
+    _no_map_project(pytester, monkeypatch, tmp_path_factory, "#!/bin/sh\necho boom >&2\nexit 1\n")
     r = pytester.runpytest_subprocess("-p", "no:cacheprovider")
-    r.assert_outcomes(passed=2)  # only tests/test_y.py
-    assert "picked by AI" in r.stdout.str()
+    r.assert_outcomes(passed=9)
+    assert "ai step failed" in r.stdout.str()
+
+
+def test_package_upgrade_selects_only_its_users(pytester, monkeypatch):
+    site = pytester.path / "vend" / "site-packages"  # outside the repo's tracked files
+    (site / "fakepkg").mkdir(parents=True)
+    (site / "fakepkg" / "__init__.py").write_text("def ping():\n    return 1\n")
+    meta = site / "fakepkg-1.0.dist-info"
+    meta.mkdir()
+    (meta / "METADATA").write_text("Metadata-Version: 2.1\nName: fakepkg\nVersion: 1.0\n")
+    (meta / "top_level.txt").write_text("fakepkg\n")
+    monkeypatch.setenv("PYTHONPATH", str(site))
+    for path, src in FILES.items():
+        p = pytester.path / path
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(textwrap.dedent(src))
+    (pytester.path / ".gitignore").write_text("vend/\n")
+    (pytester.path / "tests/test_z.py").write_text("import fakepkg\ndef test_ping(): assert fakepkg.ping() == 1\n")
+    # A cache: only the first caller runs the package's code; the second still depends on it.
+    (pytester.path / "pkg/c.py").write_text("import fakepkg\n_C = {}\ndef cached():\n"
+                                            "    if 'v' not in _C:\n        _C['v'] = fakepkg.ping()\n    return _C['v']\n")
+    (pytester.path / "tests/test_c.py").write_text("from pkg import c\ndef test_c1(): assert c.cached() == 1\n"
+                                                   "def test_c2(): assert c.cached() == 1\n")
+    pytester.runpytest_subprocess("--testscope-record", "-p", "no:cacheprovider").assert_outcomes(passed=12)
+    assert selected(pytester) == set()
+    (meta / "METADATA").write_text("Metadata-Version: 2.1\nName: fakepkg\nVersion: 1.1\n")
+    sel = json.loads(selected_raw(pytester))["selected"]
+    assert set(sel) == {"tests/test_z.py::test_ping", "tests/test_c.py::test_c1", "tests/test_c.py::test_c2"}
+    assert "fakepkg==1.0 -> fakepkg==1.1" in sel["tests/test_z.py::test_ping"]
+
+
+def test_fail_first_order():
+    from testscope.selection import order_files
+    why = {"tests/a.py::t": "pkg/x.py: import canary (module-level change)",
+           "tests/b.py::t": "pkg/x.py::f changed",
+           "tests/c.py::t": "failed last run",
+           "tests/e.py::t": "pkg/x.py::f changed",
+           "tests/d.py::t": "pkg/data.yaml references pkg/x.yaml"}
+    assert order_files(why, {"tests/b.py::t": 5.0, "tests/e.py::t": 0.1}) == [
+        "tests/c.py", "tests/e.py", "tests/b.py", "tests/d.py", "tests/a.py"]

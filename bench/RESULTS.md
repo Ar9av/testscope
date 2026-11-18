@@ -59,6 +59,42 @@ Notes:
   fault and passes 2/2 clean. Files that are flaky are removed from the ground truth
   for all selectors.
 
+## Package upgrades
+
+A bad upgrade of a dependency, simulated: `raise` at the top of one function in an installed
+package, and its version raised in `METADATA` ([`pkg_bench.py`](pkg_bench.py), rows in
+[`data/pkg_faults.jsonl`](data/pkg_faults.jsonl)). A full run gives the failing files.
+
+| fault | failing files | testscope tests run | testscope files missed | testmon |
+|---|---|---|---|---|
+| PyYAML `safe_load` | 58 | 2,278 | 4 | full suite (6,195) |
+| PyYAML `dump` | 9 | 2,278 | 0 | full suite |
+| cryptography `Ed25519PublicKey.from_public_bytes` | 7 | 763 | 0 | full suite |
+| PyJWT `decode` | 4 | 92 | 0 | full suite |
+| requests `request` | 0 | 33 | - | full suite |
+
+testscope records which installed packages each test's code ran in, and also selects the
+tests that ran a repo function whose code names the package (a cache filled by an earlier
+test hides the call otherwise). The 4 missed `safe_load` files use YAML only at import
+time, to build a module constant; covering that needs the import graph. Before this change
+testscope did not notice upgrades at all, and testmon reruns everything on any change to
+the environment.
+
+## Fail-first order
+
+Selected test files run in this order: failed last time, then tests that ran the changed
+code, then indirect reasons, then import canaries; shorter files first in each group
+([`order_bench.py`](order_bench.py)). Time is the sum of recorded file durations before the
+first failing file, one process, on the 33 caught faults, after a clean previous run.
+
+| order | median | mean | p90 |
+|---|---|---|---|
+| pytest default (by path) | 0 s | 21.3 s | 72.4 s |
+| testscope fail-first | 0 s | 4.0 s | 7.2 s |
+
+In most faults the first file already fails in both orders. Fail-first cuts the tail: an
+agent that runs `pytest -x` sees the failure in seconds, not a minute.
+
 ## Overhead
 
 | | time |
@@ -67,7 +103,8 @@ Notes:
 | `pytest --testscope-record` | 3m24s |
 | testmon DB build | 3m59s |
 
-Recording adds no measurable cost (run-to-run noise is larger).
+Recording adds no measurable cost (run-to-run noise is larger). Measured again with package
+and duration tracking, on an idle machine: plain run 2m13s, record 1m59s.
 
 ## Limits of this evidence
 
@@ -81,7 +118,9 @@ Run the harness on your own suite before you trust it there.
 index is the same on every call, so the prompt cache serves it. Two modes:
 
 - **With a map ("union"):** the model sees the testscope selection and may only add files.
-- **Without a map ("solo"):** the model picks test files from the diff alone.
+  Measured, then removed from testscope, because it caught nothing extra.
+- **Without a map ("solo"):** the model picks test files from the diff alone. This is the
+  mode testscope ships (`TESTSCOPE_AI`, used only when there is no map).
 
 Same 34 breaking faults and same 30 commits as above ([`ai_bench.py`](ai_bench.py),
 [`ai_report.py`](ai_report.py), raw rows in [`data/ai/`](data/ai/)). Prices are list

@@ -19,6 +19,8 @@ On a real 6,195-test project, over its last 30 commits:
 | Median tests run per real commit (of 6,195) | **353** | 584 | 352 files of 378 |
 | Injected faults caught (34 that break a test) | **33** | 22 | 22 |
 | Faults in data files caught (YAML, JSON, shell) | **10 / 10** | 0 / 10 | 0 / 10 |
+| Bad package upgrades caught (4 that break a test) | **4**, running 92 to 2,278 tests | 4, running all 6,195 | 0 |
+| Mean time to first failure with `-x` (same selection) | **4.0 s** fail-first; 21.3 s in pytest's order | not measured | - |
 | Recording overhead on a 3m36s suite | none measured | +23 s | - |
 
 Method, caveats and raw data: [`bench/RESULTS.md`](bench/RESULTS.md).
@@ -47,7 +49,12 @@ on automatically. The agent needs no new command and no hook. For other agents, 
 | Module-level code (constants, decorators, class bodies) | by name: tests that ran code reading the changed name, in this module or its importers; plus up to 5 tests that import the module, to catch import crashes | yes | yes |
 | Data files named by other files (a script that sources `_lib.sh`, a config that names a fixture) | one hop from files tests read; chains only through shell scripts | no | no |
 | Config / lockfile change (`pyproject.toml`, `*.lock`, `requirements*.txt`, …) | full run | full run | no |
-| Tests that failed last run | always rerun | yes | no |
+| Installed packages (upgrade, downgrade, removal) | the packages whose code each test ran, with their versions; a version change reruns only those tests | full run | no |
+| Tests that failed last run | always rerun, and run first | yes | no |
+
+Selected tests run in fail-first order: tests that failed last time, then tests that ran
+the changed code, then indirect reasons; shorter files first. Whole files move, so module
+fixtures still run once. `TESTSCOPE_ORDER=off` keeps pytest's order.
 
 Fingerprints are token-stream hashes without line numbers or comments, so moving code or
 changing a comment selects nothing. The map is a *baseline*. Selection compares
@@ -55,23 +62,20 @@ the working tree with it by content, so it works on uncommitted edits and on
 branches built from an older main. As you edit, the selection can only grow.
 Re-record to reset it.
 
-## AI step (optional)
+## No map yet? (optional AI pick)
 
 ```bash
 pip install 'testscope[ai]'
 export ANTHROPIC_API_KEY=...        # or TESTSCOPE_AI=claude to use your Claude Code login
-pytest --testscope-ai               # or TESTSCOPE_AI=anthropic
+TESTSCOPE_AI=anthropic pytest
 ```
 
-A model reads the diff and a test index and names test files to run. It only adds files;
-an error in the AI step never fails the run. With no map yet, it picks the files on its own.
-`TESTSCOPE_AI_MODEL` (default `claude-opus-5-5`) and `TESTSCOPE_AI_EFFORT` (default `low`)
-tune it. Results are cached per change, so xdist workers and reruns do not pay again.
-
-Measured on the same faults ([`bench/RESULTS.md`](bench/RESULTS.md#ai-step)): with a map,
-it caught nothing that testscope missed, and it adds a few tests. Without a map, it caught
-33 of 34 faults while it ran about 3 test files, for about 1 cent per call on Opus 5.5
-(0.05 cents on Haiku 5.5). Use it to start before you record a map.
+Until a map is recorded, a model reads the diff and a test index and picks the test files
+to run. On the same faults it caught 33 of 34 while it ran about 3 files, for about 1 cent a
+call on Opus 5.5 (0.05 cents on Haiku 5.5). It is a guess: it found every failing file only
+21 times in 34. Once a map exists the AI step is off. (We measured it on top of the map
+too: it caught nothing extra, so that mode was removed.) Details:
+[`bench/RESULTS.md`](bench/RESULTS.md#ai-step).
 
 ## CI
 
@@ -88,8 +92,9 @@ it caught nothing that testscope missed, and it adds a few tests. Without a map,
   `python -I` / `-E`, hides that child's deps. Shell scripts that read files themselves
   are seen only as "script ran".
 - Network services, databases and time are not dependencies. A flaky test stays flaky.
-- Installing or upgrading a package is not detected. Re-record after dependency changes
-  (a lockfile or `requirements*.txt` edit already triggers a full run).
+- Package tracking sees Python code that runs inside a package. A package that is only a
+  compiled extension, with no Python layer, is invisible; a lockfile or
+  `requirements*.txt` edit still triggers a full run.
 - A module-level edit runs at most 5 "import canary" tests for crashes at import time.
 - `eval`/`exec` strings and other dynamic code that no recorded test reached cannot be mapped.
 

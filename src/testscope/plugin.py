@@ -29,8 +29,8 @@ def pytest_addoption(parser):
     g.addoption("--testscope-record", action="store_true", help="run tests and record the dependency map")
     g.addoption("--testscope-off", action="store_true", help="disable testscope selection")
     g.addoption("--testscope-ai", nargs="?", const="anthropic", default=None, metavar="BACKEND",
-                help="ask an LLM for test files the selection may miss (anthropic | claude); "
-                     "or set TESTSCOPE_AI")
+                help="no map yet: let an LLM pick test files from the diff (anthropic | claude); "
+                     "or set TESTSCOPE_AI. Ignored once a map exists.")
 
 
 def _mode(config) -> str | None:
@@ -92,12 +92,6 @@ class _Select:
         # cost on a big suite). New files, unknown to the map, are always collected.
         self.known_files = {n.split("::", 1)[0] for n in m["tests"]}
         self.keep_files = {n.split("::", 1)[0] for n in list(self.sel.tests) + list(self.failed_before)}
-        self.ai = None
-        backend = config.getoption("testscope_ai") or os.environ.get("TESTSCOPE_AI")
-        if backend and backend != "off" and not self.sel.full and self.sel.changed:
-            self.ai = _ai_suggest(root, m, self.sel, self.keep_files | set(self.sel.paths), backend)
-            for f in self.ai.get("add", []):
-                self.sel.paths[f] = f"ai ({self.ai['info'].get('model')}): may be affected"
 
     def pytest_ignore_collect(self, collection_path, config):
         if self.sel.full or not collection_path.is_file():
@@ -130,7 +124,10 @@ class _Select:
                 self.why[it.nodeid] = why
         if drop:
             config.hook.pytest_deselected(items=drop)
-            items[:] = keep
+        if not self.sel.full and os.environ.get("TESTSCOPE_ORDER") != "off":
+            order = {f: i for i, f in enumerate(_sel.order_files(self.why, self.map.get("dur", {})))}
+            keep.sort(key=lambda it: order.get(it.nodeid.split("::", 1)[0], len(order)))  # stable
+        items[:] = keep
         self._write_why()
 
     def _write_why(self):
@@ -138,7 +135,7 @@ class _Select:
         os.makedirs(d, exist_ok=True)
         with open(os.path.join(d, "last-selection.json"), "w") as fh:
             json.dump({"changed": self.sel.changed, "unobserved": self.sel.unobserved,
-                       "full": self.sel.full, "ai": self.ai, "selected": self.why}, fh, indent=1)
+                       "full": self.sel.full, "selected": self.why}, fh, indent=1)
 
     def pytest_runtest_logreport(self, report):
         if report.when == "call" or report.outcome == "failed":
@@ -172,14 +169,6 @@ class _Select:
         if s.unobserved:
             tr.write_line(f"no recorded test touches: {', '.join(s.unobserved[:8])} "
                           f"(run the full suite if these matter)")
-        if self.ai:
-            i = self.ai.get("info", {})
-            if "error" in self.ai:
-                tr.write_line(f"ai: skipped ({self.ai['error']})")
-            else:
-                cost = f", ${i['usd']:.4f}" if i.get("usd") is not None else ""
-                tr.write_line(f"ai ({i.get('backend')}/{i.get('model')}): added {len(self.ai['add'])} file(s)"
-                              f"{' (cached)' if self.ai.get('cached') else ''}; {i.get('seconds')}s{cost}")
         tr.write_line("why each test ran: .testscope/last-selection.json · full suite: TESTSCOPE=off pytest")
 
 
@@ -191,7 +180,8 @@ class _AISelect:
         self.root = root
         git = lambda *a: subprocess.run(["git", *a], cwd=root, capture_output=True, text=True).stdout.split()
         try:
-            self.changed = sorted(set(git("diff", "--name-only", "HEAD")) | set(git("ls-files", "-o", "--exclude-standard")))
+            self.changed = sorted(f for f in set(git("diff", "--name-only", "HEAD")) | set(git("ls-files", "-o", "--exclude-standard"))
+                                  if not f.startswith(_sel.MAP_DIR + "/") and "__pycache__/" not in f)
         except OSError:
             self.changed = []
         self.full = None
@@ -203,7 +193,7 @@ class _AISelect:
         if not self.full:
             sel = _sel.Selection()
             sel.changed = self.changed
-            self.ai = _ai_suggest(root, {}, sel, set(), backend)
+            self.ai = _ai_suggest(root, sel, backend)
             if "error" in self.ai:
                 self.full = f"ai step failed ({self.ai['error']})"
             self.keep = set(self.ai["add"]) | {f for f in self.changed if os.path.basename(f).startswith("test_")}
@@ -239,16 +229,15 @@ class _AISelect:
         tr.write_line("this is a guess from the diff; `pytest --testscope-record` gives exact selection")
 
 
-def _ai_suggest(root, m, sel, selected, backend):
+def _ai_suggest(root, sel, backend):
     """Run the AI step once per distinct change: xdist workers and repeat runs read the cache."""
     import hashlib
     from . import ai
 
-    selected = sorted(selected)
     path = os.path.join(root, _sel.MAP_DIR, "ai-cache.json")
     try:
-        key = hashlib.sha256(json.dumps([backend, os.environ.get("TESTSCOPE_AI_MODEL"), m.get("commit"),
-                                         sel.changed, selected, ai.diff(root, m.get("commit"))]).encode()).hexdigest()
+        key = hashlib.sha256(json.dumps([backend, os.environ.get("TESTSCOPE_AI_MODEL"),
+                                         sel.changed, ai.diff(root)]).encode()).hexdigest()
         try:
             with open(path) as fh:
                 c = json.load(fh)
@@ -256,7 +245,7 @@ def _ai_suggest(root, m, sel, selected, backend):
                 return dict(c["result"], cached=True)
         except (OSError, ValueError, KeyError):
             pass
-        add, info = ai.suggest(root, m.get("commit"), sel.changed, selected, backend=backend)
+        add, info = ai.suggest(root, sel.changed, backend=backend)
         res = {"add": sorted(add), "info": info}
     except Exception as e:  # never fail the run because the AI step failed
         return {"add": [], "info": {"backend": backend}, "error": f"{type(e).__name__}: {e}"[:200]}
@@ -281,9 +270,12 @@ class _Record:
         os.makedirs(self.tmp, exist_ok=True)
         self.n = 0
         self.failed: set[str] = set()
+        self.dur: dict[str, float] = {}
 
-    def _ids(self, funcs, files, dirs):
+    def _ids(self, funcs, files, dirs, pkgs=()):
         out = set()
+        for p in pkgs:
+            out.add(self.deps.setdefault(f"p:{p}", len(self.deps)))
         for f, q in funcs:
             out.add(self.deps.setdefault(f"f:{f}::{q}", len(self.deps)))
         for f in files:
@@ -324,7 +316,7 @@ class _Record:
             for name in os.listdir(out):
                 try:
                     d = json.load(open(os.path.join(out, name)))
-                    ids |= self._ids([tuple(x) for x in d["funcs"]], d["files"], d["dirs"])
+                    ids |= self._ids([tuple(x) for x in d["funcs"]], d["files"], d["dirs"], d.get("pkgs", ()))
                 except (OSError, ValueError, KeyError):
                     pass
             shutil.rmtree(out, ignore_errors=True)
@@ -334,10 +326,11 @@ class _Record:
     def pytest_runtest_logreport(self, report):
         if report.failed:
             self.failed.add(report.nodeid)
+        self.dur[report.nodeid] = self.dur.get(report.nodeid, 0) + report.duration  # setup+call+teardown
 
     def _shard(self):
         names = sorted(self.deps, key=self.deps.get)
-        return {"deps": names, "tests": {k: sorted(v) for k, v in self.tests.items()}}
+        return {"deps": names, "tests": {k: sorted(v) for k, v in self.tests.items()}, "dur": self.dur}
 
     def pytest_sessionfinish(self, session):
         d = os.path.join(self.root, _sel.MAP_DIR)
@@ -353,7 +346,9 @@ class _Record:
                 os.remove(os.path.join(d, name))
         deps: dict[str, int] = {}
         tests: dict[str, list[int]] = {}
+        dur: dict[str, float] = {}
         for sh in shards:
+            dur.update(sh.get("dur", {}))
             for nid, ids in sh["tests"].items():
                 tests[nid] = sorted({deps.setdefault(sh["deps"][i], len(deps)) for i in ids})
         try:
@@ -363,7 +358,9 @@ class _Record:
             commit = ""
         m = {"version": _sel.MAP_VERSION, "created": int(time.time()), "commit": commit,
              "python": sys.version.split()[0], "snap": snapshot(self.root),
-             "deps": sorted(deps, key=deps.get), "tests": tests}
+             "deps": sorted(deps, key=deps.get), "tests": tests,
+             "pkgs": _sel.installed(d[2:] for d in deps if d.startswith("p:")),
+             "dur": {k: round(v, 4) for k, v in dur.items() if k in tests}}
         with open(os.path.join(d, "map.json"), "w") as fh:
             json.dump(m, fh, separators=(",", ":"))
         shutil.rmtree(os.path.join(d, "tmp"), ignore_errors=True)

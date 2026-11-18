@@ -7,6 +7,7 @@ Imported by the pytest plugin and, in child Python processes, by _boot/sitecusto
 from __future__ import annotations
 
 import os
+import site
 import sys
 
 TOOL_ID = 4  # 0-2 and 5 are named (debugger, coverage, profiler, optimizer)
@@ -20,8 +21,17 @@ class Recorder:
         self.funcs: set[tuple[str, str]] = set()  # (relpath, qualname)
         self.files: set[str] = set()              # data files read or executed
         self.dirs: set[str] = set()               # directories listed
+        self.pkgs: set[str] = set()               # top-level installed packages whose code ran
         self.active = False
         self._rel: dict[str, str | None] = {}
+        self._pk: dict[str, str | None] = {}
+        dirs = {p for p in sys.path if p.endswith(("site-packages", "dist-packages"))}
+        for get in (site.getsitepackages, lambda: [site.getusersitepackages()]):
+            try:
+                dirs.update(get())
+            except Exception:
+                pass
+        self._site = tuple(os.path.realpath(d) + os.sep for d in dirs if d)
 
     def rel(self, path) -> str | None:
         if isinstance(path, bytes):
@@ -38,12 +48,32 @@ class Recorder:
         self._rel[path] = r
         return r
 
+    def pkg(self, path) -> str | None:
+        """Top-level import name of the installed package a file belongs to."""
+        r = self._pk.get(path, "")
+        if r != "":
+            return r
+        full, r = os.path.realpath(path), None
+        for d in self._site:
+            if full.startswith(d):
+                top = full[len(d):].split(os.sep, 1)[0]
+                if not top.endswith((".dist-info", ".egg-info", ".pth")) and top != "testscope":
+                    r = top[:-3] if top.endswith(".py") else top
+                break
+        self._pk[path] = r
+        return r
+
     # -- sys.monitoring -------------------------------------------------
     def _on_start(self, code, offset):
         if self.active:
             r = self.rel(code.co_filename)
-            if r is not None and r.endswith(".py"):
-                self.funcs.add((r, code.co_qualname))
+            if r is not None:
+                if r.endswith(".py"):
+                    self.funcs.add((r, code.co_qualname))
+            else:
+                p = self.pkg(code.co_filename)
+                if p:
+                    self.pkgs.add(p)
             return sys.monitoring.DISABLE
         # Not recording right now: keep the event armed so the next test sees it.
         return None
@@ -77,10 +107,10 @@ class Recorder:
         sys.addaudithook(self._on_audit)  # cannot be removed; gated by self.active
 
     def start(self):
-        self.funcs, self.files, self.dirs = set(), set(), set()
+        self.funcs, self.files, self.dirs, self.pkgs = set(), set(), set(), set()
         sys.monitoring.restart_events()
         self.active = True
 
     def stop(self):
         self.active = False
-        return self.funcs, self.files, self.dirs
+        return self.funcs, self.files, self.dirs, self.pkgs

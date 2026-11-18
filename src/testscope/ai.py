@@ -1,5 +1,5 @@
-"""Optional AI second opinion: an LLM reads the diff and the test index and names test
-files the map-based selection may have missed. It only ever adds files, never removes.
+"""No map yet: an LLM reads the diff and a test index and names the test files to run.
+Once a map exists it is not used (measured: it found nothing the map missed).
 
 Backends (TESTSCOPE_AI):
   anthropic  Anthropic API, needs ANTHROPIC_API_KEY (pip install 'testscope[ai]')
@@ -14,13 +14,11 @@ MAX_DIFF = 60_000  # chars
 # $ per 1M tokens: input, output, cache write (5m), cache read
 PRICES = {"claude-opus-5-5": (4, 20, 5, 0.20), "claude-sonnet-5-5": (2, 10, 2.5, 0.10),
           "claude-haiku-5-5": (0.10, 0.50, 0.125, 0.01)}
-SYSTEM = ("You pick pytest test files for a code change. A selector that traces what each test "
-          "executed has already chosen some files. Name the other test files that this change "
+SYSTEM = ("You pick pytest test files for a code change. Name the test files that this change "
           "could plausibly make fail: tests that exercise the changed behavior, read a changed "
-          "data file, or import a changed module in a way the tracer may not see. Return only "
-          "paths from the test index. Return an empty list when the chosen files already cover "
-          "the change. Every extra file costs run time, so do not list files that only share a "
-          "topic with the change.")
+          "data file, or import a changed module. Return only paths from the test index. Return "
+          "an empty list when no test can be affected. Every extra file costs run time, so do "
+          "not list files that only share a topic with the change.")
 SCHEMA = {"type": "object", "properties": {"add": {"type": "array", "items": {"type": "string"}}},
           "required": ["add"], "additionalProperties": False}
 
@@ -43,34 +41,30 @@ def test_index(root):
     return "\n".join(out)
 
 
-def diff(root, base):
-    cmd = ["git", "diff", "--no-color", "--no-ext-diff"] + ([base] if base else ["HEAD"])
-    r = subprocess.run(cmd, cwd=root, capture_output=True, text=True)
-    if r.returncode and base:  # map commit not in this clone
-        r = subprocess.run(cmd[:-1] + ["HEAD"], cwd=root, capture_output=True, text=True)
-    return r.stdout
+def diff(root):
+    return subprocess.run(["git", "diff", "--no-color", "--no-ext-diff", "HEAD"], cwd=root,
+                          capture_output=True, text=True).stdout
 
 
-def suggest(root, base, changed, selected, backend=None, model=None, effort=None, index=None):
+def suggest(root, changed, backend=None, model=None, effort=None, index=None):
     """Return (set of extra test files, info dict). Raises on backend errors."""
     backend = backend or os.environ.get("TESTSCOPE_AI", "anthropic")
     model = model or os.environ.get("TESTSCOPE_AI_MODEL") or DEFAULT_MODEL
     effort = effort or os.environ.get("TESTSCOPE_AI_EFFORT", "low")
     index = index if index is not None else test_index(root)
-    d = diff(root, base)
+    d = diff(root)
     note = ""
     if len(d) > MAX_DIFF:  # ponytail: hard cap; the file list below stays complete
         d, note = d[:MAX_DIFF], f"\n[diff truncated to {MAX_DIFF} chars; the changed-file list is complete]"
     known = {line.split(":", 1)[0] for line in index.splitlines()}
-    change = (f"Changed files:\n" + "\n".join(changed) + f"\n\nDiff:\n{d}{note}\n\n"
-              f"Already selected:\n" + ("\n".join(sorted(selected)) or "(none)"))
+    change = f"Changed files:\n" + "\n".join(changed) + f"\n\nDiff:\n{d}{note}"
     t = time.time()
     if backend == "claude":
         add, info = _claude(index, change, model, effort)
     else:
         add, info = _anthropic(index, change, model, effort)
     info.update(backend=backend, model=model, effort=effort, seconds=round(time.time() - t, 1))
-    return {f for f in add if f in known} - set(selected), info
+    return {f for f in add if f in known}, info
 
 
 def _anthropic(index, change, model, effort):
