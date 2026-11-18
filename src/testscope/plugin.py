@@ -28,6 +28,9 @@ def pytest_addoption(parser):
     g.addoption("--testscope", action="store_true", help="run only tests affected by changes since the map")
     g.addoption("--testscope-record", action="store_true", help="run tests and record the dependency map")
     g.addoption("--testscope-off", action="store_true", help="disable testscope selection")
+    g.addoption("--testscope-ai", nargs="?", const="anthropic", default=None, metavar="BACKEND",
+                help="ask an LLM for test files the selection may miss (anthropic | claude); "
+                     "or set TESTSCOPE_AI")
 
 
 def _mode(config) -> str | None:
@@ -35,9 +38,10 @@ def _mode(config) -> str | None:
         return None
     if config.getoption("testscope_record"):
         return "record"
+    ai = config.getoption("testscope_ai") or os.environ.get("TESTSCOPE_AI")
     if config.getoption("testscope") or os.environ.get("TESTSCOPE") == "on":
         return "select"
-    if any(os.environ.get(k) for k in AGENT_ENV):
+    if (ai and ai != "off") or any(os.environ.get(k) for k in AGENT_ENV):
         # Agent asked for specific files/ids: respect that, do not narrow further.
         for a in config.args:
             if "::" in a or os.path.isfile(a):
@@ -58,6 +62,10 @@ def pytest_configure(config):
         config.pluginmanager.register(_Record(config, root), "testscope-record")
         return
     m = _sel.load_map(root)
+    backend = config.getoption("testscope_ai") or os.environ.get("TESTSCOPE_AI")
+    if m is None and backend and backend != "off":
+        config.pluginmanager.register(_AISelect(root, backend), "testscope-ai-select")
+        return
     if m is None:
         if config.getoption("testscope") or os.environ.get("TESTSCOPE") == "on":
             raise pytest.UsageError("testscope: no map for this version. Run `pytest --testscope-record` "
@@ -84,6 +92,12 @@ class _Select:
         # cost on a big suite). New files, unknown to the map, are always collected.
         self.known_files = {n.split("::", 1)[0] for n in m["tests"]}
         self.keep_files = {n.split("::", 1)[0] for n in list(self.sel.tests) + list(self.failed_before)}
+        self.ai = None
+        backend = config.getoption("testscope_ai") or os.environ.get("TESTSCOPE_AI")
+        if backend and backend != "off" and not self.sel.full and self.sel.changed:
+            self.ai = _ai_suggest(root, m, self.sel, self.keep_files | set(self.sel.paths), backend)
+            for f in self.ai.get("add", []):
+                self.sel.paths[f] = f"ai ({self.ai['info'].get('model')}): may be affected"
 
     def pytest_ignore_collect(self, collection_path, config):
         if self.sel.full or not collection_path.is_file():
@@ -124,7 +138,7 @@ class _Select:
         os.makedirs(d, exist_ok=True)
         with open(os.path.join(d, "last-selection.json"), "w") as fh:
             json.dump({"changed": self.sel.changed, "unobserved": self.sel.unobserved,
-                       "full": self.sel.full, "selected": self.why}, fh, indent=1)
+                       "full": self.sel.full, "ai": self.ai, "selected": self.why}, fh, indent=1)
 
     def pytest_runtest_logreport(self, report):
         if report.when == "call" or report.outcome == "failed":
@@ -158,7 +172,98 @@ class _Select:
         if s.unobserved:
             tr.write_line(f"no recorded test touches: {', '.join(s.unobserved[:8])} "
                           f"(run the full suite if these matter)")
+        if self.ai:
+            i = self.ai.get("info", {})
+            if "error" in self.ai:
+                tr.write_line(f"ai: skipped ({self.ai['error']})")
+            else:
+                cost = f", ${i['usd']:.4f}" if i.get("usd") is not None else ""
+                tr.write_line(f"ai ({i.get('backend')}/{i.get('model')}): added {len(self.ai['add'])} file(s)"
+                              f"{' (cached)' if self.ai.get('cached') else ''}; {i.get('seconds')}s{cost}")
         tr.write_line("why each test ran: .testscope/last-selection.json · full suite: TESTSCOPE=off pytest")
+
+
+class _AISelect:
+    """No map yet: the LLM picks test files from the diff alone. Changed and new test files
+    always run. A config or lockfile change, an empty diff, or an AI error runs everything."""
+
+    def __init__(self, root, backend):
+        self.root = root
+        git = lambda *a: subprocess.run(["git", *a], cwd=root, capture_output=True, text=True).stdout.split()
+        try:
+            self.changed = sorted(set(git("diff", "--name-only", "HEAD")) | set(git("ls-files", "-o", "--exclude-standard")))
+        except OSError:
+            self.changed = []
+        self.full = None
+        if not self.changed:
+            self.full = "no changes against HEAD"
+        elif any(_sel._match(f, _sel.FULL_RUN) for f in self.changed):
+            self.full = "config or lockfile changed"
+        self.ai, self.keep = None, set()
+        if not self.full:
+            sel = _sel.Selection()
+            sel.changed = self.changed
+            self.ai = _ai_suggest(root, {}, sel, set(), backend)
+            if "error" in self.ai:
+                self.full = f"ai step failed ({self.ai['error']})"
+            self.keep = set(self.ai["add"]) | {f for f in self.changed if os.path.basename(f).startswith("test_")}
+
+    def pytest_ignore_collect(self, collection_path, config):
+        if self.full or not collection_path.is_file():
+            return None
+        rel = os.path.relpath(str(collection_path), self.root)
+        name = os.path.basename(rel)
+        if name.startswith("test_") and name.endswith(".py") and rel not in self.keep:
+            return True
+        return None
+
+    def pytest_sessionfinish(self, session):
+        if session.exitstatus == pytest.ExitCode.NO_TESTS_COLLECTED and not self.full:
+            session.exitstatus = pytest.ExitCode.OK
+
+    def pytest_report_header(self, config):
+        if self.full:
+            return f"testscope: no map; full run — {self.full}"
+        return f"testscope: no map; running {len(self.keep)} test file(s) picked by AI (record a map for exact selection)"
+
+    def pytest_terminal_summary(self, terminalreporter):
+        tr = terminalreporter
+        tr.write_sep("-", "testscope")
+        if self.full:
+            tr.write_line(f"no map; full run: {self.full}")
+            return
+        i = self.ai["info"]
+        cost = f", ${i['usd']:.4f}" if i.get("usd") is not None else ""
+        tr.write_line(f"no map; ai ({i.get('backend')}/{i.get('model')}) picked: {', '.join(sorted(self.keep)[:8])}"
+                      f"{' ...' if len(self.keep) > 8 else ''} ({i.get('seconds')}s{cost})")
+        tr.write_line("this is a guess from the diff; `pytest --testscope-record` gives exact selection")
+
+
+def _ai_suggest(root, m, sel, selected, backend):
+    """Run the AI step once per distinct change: xdist workers and repeat runs read the cache."""
+    import hashlib
+    from . import ai
+
+    selected = sorted(selected)
+    path = os.path.join(root, _sel.MAP_DIR, "ai-cache.json")
+    try:
+        key = hashlib.sha256(json.dumps([backend, os.environ.get("TESTSCOPE_AI_MODEL"), m.get("commit"),
+                                         sel.changed, selected, ai.diff(root, m.get("commit"))]).encode()).hexdigest()
+        try:
+            with open(path) as fh:
+                c = json.load(fh)
+            if c.get("key") == key:
+                return dict(c["result"], cached=True)
+        except (OSError, ValueError, KeyError):
+            pass
+        add, info = ai.suggest(root, m.get("commit"), sel.changed, selected, backend=backend)
+        res = {"add": sorted(add), "info": info}
+    except Exception as e:  # never fail the run because the AI step failed
+        return {"add": [], "info": {"backend": backend}, "error": f"{type(e).__name__}: {e}"[:200]}
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as fh:
+        json.dump({"key": key, "result": res}, fh)
+    return res
 
 
 class _Record:

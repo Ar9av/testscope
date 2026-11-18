@@ -1,0 +1,154 @@
+{
+ "opus_low": {
+  "calls": 138,
+  "errors": 0,
+  "usd_total": 2.283,
+  "usd_per_call": 0.0165,
+  "usd_per_call_after_first": 0.0094,
+  "seconds_median": 2.4,
+  "seconds_p90": 3.4,
+  "input_tokens_median": 30268.0,
+  "output_tokens_median": 58.5,
+  "union": {
+   "breaking": 34,
+   "caught": 33,
+   "all_files": 32,
+   "files_added_median": 2.0,
+   "files_added_mean": 3.5,
+   "added_not_failing_mean": 3.4
+  },
+  "solo": {
+   "breaking": 34,
+   "caught": 33,
+   "all_files": 21,
+   "files_added_median": 3.0,
+   "files_added_mean": 4.4,
+   "added_not_failing_mean": 3.4
+  },
+  "testscope_alone": {
+   "caught": 33,
+   "all_files": 32
+  },
+  "commits": {
+   "n": 30,
+   "files_added_median": 4.0,
+   "tests_added_median": 49.5,
+   "tests_added_mean": 62,
+   "ts_files_median": 53.5
+  }
+ },
+ "opus_med": {
+  "calls": 138,
+  "errors": 0,
+  "usd_total": 2.642,
+  "usd_per_call": 0.0191,
+  "usd_per_call_after_first": 0.0127,
+  "seconds_median": 3.3,
+  "seconds_p90": 5.7,
+  "input_tokens_median": 30268.0,
+  "output_tokens_median": 140.0,
+  "union": {
+   "breaking": 34,
+   "caught": 33,
+   "all_files": 32,
+   "files_added_median": 2.0,
+   "files_added_mean": 2.6,
+   "added_not_failing_mean": 2.5
+  },
+  "solo": {
+   "breaking": 34,
+   "caught": 33,
+   "all_files": 20,
+   "files_added_median": 3.0,
+   "files_added_mean": 4.2,
+   "added_not_failing_mean": 3.1
+  },
+  "testscope_alone": {
+   "caught": 33,
+   "all_files": 32
+  },
+  "commits": {
+   "n": 30,
+   "files_added_median": 3.0,
+   "tests_added_median": 35.5,
+   "tests_added_mean": 54,
+   "ts_files_median": 53.5
+  }
+ },
+ "sonnet_low": {
+  "calls": 138,
+  "errors": 0,
+  "usd_total": 1.279,
+  "usd_per_call": 0.0093,
+  "usd_per_call_after_first": 0.0052,
+  "seconds_median": 2.1,
+  "seconds_p90": 3.3,
+  "input_tokens_median": 30268.0,
+  "output_tokens_median": 78.0,
+  "union": {
+   "breaking": 34,
+   "caught": 33,
+   "all_files": 32,
+   "files_added_median": 3.0,
+   "files_added_mean": 5.0,
+   "added_not_failing_mean": 5
+  },
+  "solo": {
+   "breaking": 34,
+   "caught": 33,
+   "all_files": 21,
+   "files_added_median": 3.5,
+   "files_added_mean": 5.5,
+   "added_not_failing_mean": 4.4
+  },
+  "testscope_alone": {
+   "caught": 33,
+   "all_files": 32
+  },
+  "commits": {
+   "n": 30,
+   "files_added_median": 6.5,
+   "tests_added_median": 88.0,
+   "tests_added_mean": 118,
+   "ts_files_median": 53.5
+  }
+ },
+ "haiku_low": {
+  "calls": 138,
+  "errors": 0,
+  "usd_total": 0.097,
+  "usd_per_call": 0.0007,
+  "usd_per_call_after_first": 0.0005,
+  "seconds_median": 1.7,
+  "seconds_p90": 4.3,
+  "input_tokens_median": 30268.0,
+  "output_tokens_median": 188.5,
+  "union": {
+   "breaking": 34,
+   "caught": 33,
+   "all_files": 32,
+   "files_added_median": 2.5,
+   "files_added_mean": 4.6,
+   "added_not_failing_mean": 4.6
+  },
+  "solo": {
+   "breaking": 34,
+   "caught": 31,
+   "all_files": 19,
+   "files_added_median": 3.0,
+   "files_added_mean": 5.3,
+   "added_not_failing_mean": 4.4
+  },
+  "testscope_alone": {
+   "caught": 33,
+   "all_files": 32
+  },
+  "commits": {
+   "n": 30,
+   "files_added_median": 1.0,
+   "tests_added_median": 7.5,
+   "tests_added_mean": 37,
+   "ts_files_median": 53.5
+  }
+ }
+}

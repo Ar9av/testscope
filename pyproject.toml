@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "testscope"
-version = "0.1.0"
+version = "0.2.0"
 description = "Run only the tests a change can affect. Built for AI coding agents and CI."
 readme = "README.md"
 requires-python = ">=3.9"
@@ -16,6 +16,9 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "Topic :: Software Development :: Testing",
 ]
+
+[project.optional-dependencies]
+ai = ["anthropic>=1"]
 
 [project.urls]
 Homepage = "https://github.com/Ar9av/testscope"

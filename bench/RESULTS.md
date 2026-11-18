@@ -73,3 +73,52 @@ Recording adds no measurable cost (run-to-run noise is larger).
 
 One project. Faults are synthetic. Real commits are measured for size, not for misses.
 Run the harness on your own suite before you trust it there.
+
+## AI step
+
+`--testscope-ai` (or `TESTSCOPE_AI=anthropic|claude`) sends the diff and a test index
+(each test file with the repo modules it imports, about 30k tokens) to a model. The test
+index is the same on every call, so the prompt cache serves it. Two modes:
+
+- **With a map ("union"):** the model sees the testscope selection and may only add files.
+- **Without a map ("solo"):** the model picks test files from the diff alone.
+
+Same 34 breaking faults and same 30 commits as above ([`ai_bench.py`](ai_bench.py),
+[`ai_report.py`](ai_report.py), raw rows in [`data/ai/`](data/ai/)). Prices are list
+prices from the API usage fields.
+
+| mode | model, effort | caught | all files | files added per fault (median) | tests added per real commit (median) | $ per call | s per call (median) |
+|---|---|---|---|---|---|---|---|
+| testscope alone | - | 33 | 32 | - | - | 0 | - |
+| union | Opus 5.5, low | 33 | 32 | 2 | 49.5 | 0.0094 | 2.4 |
+| union | Opus 5.5, medium | 33 | 32 | 2 | 35.5 | 0.0127 | 3.3 |
+| union | Sonnet 5.5, low | 33 | 32 | 3 | 88 | 0.0052 | 2.1 |
+| union | Haiku 5.5, low | 33 | 32 | 2.5 | 7.5 | 0.0005 | 1.7 |
+| solo (no map) | Opus 5.5, low | 33 | 21 | 3 | - | 0.0094 | 2.4 |
+| solo (no map) | Opus 5.5, medium | 33 | 20 | 3 | - | 0.0127 | 3.3 |
+| solo (no map) | Sonnet 5.5, low | 33 | 21 | 3.5 | - | 0.0052 | 2.1 |
+| solo (no map) | Haiku 5.5, low | 31 | 19 | 3 | - | 0.0005 | 1.7 |
+
+For comparison, without a map: testmon catches 22 (it also needs a recorded DB), and the
+import graph catches 22 at 352 files.
+
+What this shows:
+
+- **With a map, the AI step found nothing new.** On no fault did it add a failing file that
+  testscope missed. The one fault testscope misses (an import crash in a module constant)
+  was missed by every model too. It adds 2 to 3 files per fault that do not fail, and 7 to
+  88 tests per real commit. Leave it off unless your suite has deps testscope cannot see.
+- **Without a map, the AI step is a good first guess.** It caught 33 of 34 faults while it
+  ran about 3 test files. It found every failing file only 21 times in 34, so treat it as a
+  guess until you record a map.
+- **Cost:** the first call writes the test index to the cache (about $0.15 on Opus 5.5).
+  After that, a call is about 1 cent on Opus 5.5 and 0.05 cents on Haiku 5.5. The cache
+  lives 5 minutes, so an agent that runs tests every few minutes stays on cache reads.
+- **Claude Code CLI backend (`TESTSCOPE_AI=claude`):** uses the Claude Code login, no API
+  key. It works (70 calls, no errors, 8.3 s median). Its prompt cache hit for only a few
+  calls and then stopped, so most calls wrote the whole prompt again, $0.25 at list price.
+  On a claude.ai plan that counts against plan limits, not money. A plain `claude -p`
+  loads the full agent context (about 450k tokens per call); testscope runs it with no
+  tools, MCP, settings or project files.
+- The faults are synthetic. A `raise` in a named function is easy to match by name, so
+  the solo numbers are likely better than on real bugs.

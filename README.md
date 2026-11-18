@@ -55,6 +55,24 @@ the working tree with it by content, so it works on uncommitted edits and on
 branches built from an older main. As you edit, the selection can only grow.
 Re-record to reset it.
 
+## AI step (optional)
+
+```bash
+pip install 'testscope[ai]'
+export ANTHROPIC_API_KEY=...        # or TESTSCOPE_AI=claude to use your Claude Code login
+pytest --testscope-ai               # or TESTSCOPE_AI=anthropic
+```
+
+A model reads the diff and a test index and names test files to run. It only adds files;
+an error in the AI step never fails the run. With no map yet, it picks the files on its own.
+`TESTSCOPE_AI_MODEL` (default `claude-opus-5-5`) and `TESTSCOPE_AI_EFFORT` (default `low`)
+tune it. Results are cached per change, so xdist workers and reruns do not pay again.
+
+Measured on the same faults ([`bench/RESULTS.md`](bench/RESULTS.md#ai-step)): with a map,
+it caught nothing that testscope missed, and it adds a few tests. Without a map, it caught
+33 of 34 faults while it ran about 3 test files, for about 1 cent per call on Opus 5.5
+(0.05 cents on Haiku 5.5). Use it to start before you record a map.
+
 ## CI
 
 [`examples/github-actions.yml`](examples/github-actions.yml):

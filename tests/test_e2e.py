@@ -167,3 +167,57 @@ def test_nothing_affected_exits_zero(proj):
     (proj.path / "pkg/a.py").write_text(textwrap.dedent(FILES["pkg/a.py"]))
     r = proj.runpytest_subprocess("--testscope", "-p", "no:cacheprovider")
     assert r.ret == 0
+
+
+def test_ai_adds_files_and_caches(proj, monkeypatch, tmp_path_factory):
+    # Fake `claude` CLI: logs each call, always suggests test_y.py plus a path that is not a test.
+    bin_ = proj.path / "fakebin"
+    bin_.mkdir()
+    exe = bin_ / "claude"
+    exe.write_text("#!/bin/sh\ncat > /dev/null\necho x >> \"$TS_CALLS\"\n"
+                   "echo '{\"structured_output\": {\"add\": [\"tests/test_y.py\", \"nope.py\"]},"
+                   " \"usage\": {\"input_tokens\": 5, \"output_tokens\": 2}, \"total_cost_usd\": 0.001}'\n")
+    exe.chmod(0o755)
+    calls = tmp_path_factory.mktemp("calls") / "calls.txt"  # outside the project: not a change
+    monkeypatch.setenv("PATH", f"{bin_}:{__import__('os').environ['PATH']}")
+    monkeypatch.setenv("TS_CALLS", str(calls))
+    monkeypatch.setenv("TESTSCOPE_AI", "claude")
+    edit(proj, "pkg/a.py", "return 1", "return 1  # same\n    pass")
+    assert selected(proj) == ids("test_f", "tests/test_y.py::test_h", "tests/test_y.py::test_fx")
+    raw = json.loads((proj.path / ".testscope/last-selection.json").read_text())
+    assert raw["ai"]["add"] == ["tests/test_y.py"]
+    selected(proj)  # same change again: served from the cache
+    assert calls.read_text().count("x") == 1
+
+
+def test_ai_failure_never_fails_the_run(proj, monkeypatch):
+    bin_ = proj.path / "fakebin"
+    bin_.mkdir()
+    (bin_ / "claude").write_text("#!/bin/sh\necho boom >&2\nexit 1\n")
+    (bin_ / "claude").chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_}:{__import__('os').environ['PATH']}")
+    monkeypatch.setenv("TESTSCOPE_AI", "claude")
+    edit(proj, "pkg/a.py", "return 1", "return 1  # same\n    pass")
+    r = proj.runpytest_subprocess("--testscope", "-p", "no:cacheprovider")
+    r.assert_outcomes(passed=1)
+    assert "ai: skipped" in r.stdout.str()
+
+
+def test_ai_without_map_picks_from_diff(pytester, monkeypatch, tmp_path_factory):
+    import subprocess
+    for path, src in FILES.items():
+        p = pytester.path / path
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(textwrap.dedent(src))
+    bin_ = tmp_path_factory.mktemp("bin")
+    (bin_ / "claude").write_text("#!/bin/sh\ncat > /dev/null\n"
+                                 "echo '{\"structured_output\": {\"add\": [\"tests/test_y.py\"]}, \"usage\": {}}'\n")
+    (bin_ / "claude").chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_}:{__import__('os').environ['PATH']}")
+    monkeypatch.setenv("TESTSCOPE_AI", "claude")
+    git = lambda *a: subprocess.run(["git", *a], cwd=pytester.path, check=True, capture_output=True)
+    git("init", "-q"); git("add", "."); git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "x")
+    edit(pytester, "pkg/b.py", "* 2", "* 2 + 0")
+    r = pytester.runpytest_subprocess("-p", "no:cacheprovider")
+    r.assert_outcomes(passed=2)  # only tests/test_y.py
+    assert "picked by AI" in r.stdout.str()
