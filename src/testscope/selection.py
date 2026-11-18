@@ -18,6 +18,7 @@ IGNORE = ["*.md", "*.rst", "docs/*", "LICENSE*", "CHANGELOG*", ".github/*", "*.p
 MAP_DIR = ".testscope"
 MAP_VERSION = 2
 CANARIES = 5
+SCRIPTS = (".sh", ".bash", ".zsh")
 
 
 def load_map(root: str) -> dict | None:
@@ -207,9 +208,11 @@ def _referenced_data(root, changed, reads, users, add):
         f = todo.pop()
         name = os.path.basename(f)
         for x, i in reads.items():
-            if x not in seen and name in text(x):
-                add(users[i], f"{x} references {f}")
-                seen.add(x)
+            if x in seen or _match(x, IGNORE) or name not in text(x):
+                continue  # docs name files without loading them
+            add(users[i], f"{x} references {f}")
+            seen.add(x)
+            if x.endswith(SCRIPTS):  # a script sourcing a script sourcing ...; data stops at one hop
                 todo.append(x)
 
 
