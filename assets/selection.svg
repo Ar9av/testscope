@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 210" width="720" height="210" font-family="-apple-system,Segoe UI,Helvetica,Arial,sans-serif">
+<style>.bg{fill:#fcfcfb}.t1{fill:#0b0b0b}.t2{fill:#52514e}.muted{fill:#c9c7c0}.acc{fill:#2a78d6}.grid{stroke:#e6e4de}@media (prefers-color-scheme:dark){.bg{fill:#1a1a19}.t1{fill:#f0efec}.t2{fill:#c3c2b7}.muted{fill:#55544f}.acc{fill:#3987e5}.grid{stroke:#33332f}}</style>
+<rect class="bg" width="720" height="210" rx="8"/>
+<text class="t1" x="20" y="28" font-size="15" font-weight="600">Tests run per change, median of 30 real commits</text>
+<text class="t2" x="108" y="72.0" font-size="13" text-anchor="end">Full suite</text>
+<rect class="muted" x="120" y="52" width="510.0" height="30" rx="4"/>
+<text class="t1" x="638.0" y="72.0" font-size="13" font-weight="600">6,195</text>
+<text class="t2" x="108" y="118.0" font-size="13" text-anchor="end">testmon</text>
+<rect class="muted" x="120" y="98" width="48.1" height="30" rx="4"/>
+<text class="t1" x="176.1" y="118.0" font-size="13" font-weight="600">584</text>
+<text class="t2" x="108" y="164.0" font-size="13" text-anchor="end">testscope</text>
+<rect class="acc" x="120" y="144" width="29.1" height="30" rx="4"/>
+<text class="t1" x="157.1" y="164.0" font-size="13" font-weight="600">353</text>
+</svg>

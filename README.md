@@ -8,6 +8,21 @@ background and the agent stops reading its output. testscope records which code 
 files each test really touches. After that, plain `pytest` runs only the tests your
 change can reach.
 
+![testscope picks 71 of 6,162 tests for a one-file change](https://raw.githubusercontent.com/Ar9av/testscope/master/assets/demo.gif)
+
+On a real 6,195-test project, over its last 30 commits:
+
+![Median tests run per change: full suite 6,195, testmon 584, testscope 353](https://raw.githubusercontent.com/Ar9av/testscope/master/assets/selection.svg)
+
+| | testscope | pytest-testmon | import graph |
+|---|---|---|---|
+| Median tests run per real commit (of 6,195) | **353** | 584 | 352 files of 378 |
+| Injected faults caught (34 that break a test) | **33** | 22 | 22 |
+| Faults in data files caught (YAML, JSON, shell) | **10 / 10** | 0 / 10 | 0 / 10 |
+| Recording overhead on a 3m36s suite | none measured | +23 s | - |
+
+Method, caveats and raw data: [`bench/RESULTS.md`](bench/RESULTS.md).
+
 ```bash
 pip install testscope
 pytest --testscope-record      # once (or in CI on main): full run + dependency map
@@ -29,11 +44,12 @@ on automatically. The agent needs no new command and no hook. For other agents, 
 | Code run in child Python processes | `sitecustomize` on `PYTHONPATH`, tagged with the running test | no | no |
 | Data files read (YAML, JSON, fixtures, shell scripts run) | audit hooks: `open`, `subprocess.Popen` | no | no |
 | Files added to / removed from a listed directory | audit hooks: `os.listdir`, `os.scandir` | no | no |
-| Module-level code (constants, decorators, class bodies) | conservative: tests that ran *any* code of the module, plus tests that import it transitively | yes | yes |
+| Module-level code (constants, decorators, class bodies) | by name: tests that ran code reading the changed name, in this module or its importers; plus up to 5 tests that import the module, to catch import crashes | yes | yes |
+| Data files named by other files (a script that sources `_lib.sh`, a config that names a fixture) | one hop from files tests read; chains only through shell scripts | no | no |
 | Config / lockfile change (`pyproject.toml`, `*.lock`, `requirements*.txt`, …) | full run | full run | no |
 | Tests that failed last run | always rerun | yes | no |
 
-Function fingerprints are AST hashes without line numbers, so moving code or
+Fingerprints are token-stream hashes without line numbers or comments, so moving code or
 changing a comment selects nothing. The map is a *baseline*. Selection compares
 the working tree with it by content, so it works on uncommitted edits and on
 branches built from an older main. As you edit, the selection can only grow.
@@ -54,10 +70,14 @@ Re-record to reset it.
   `python -I` / `-E`, hides that child's deps. Shell scripts that read files themselves
   are seen only as "script ran".
 - Network services, databases and time are not dependencies. A flaky test stays flaky.
+- Installing or upgrading a package is not detected. Re-record after dependency changes
+  (a lockfile or `requirements*.txt` edit already triggers a full run).
+- A module-level edit runs at most 5 "import canary" tests for crashes at import time.
 - `eval`/`exec` strings and other dynamic code that no recorded test reached cannot be mapped.
 
 ## Evidence
 
-See [`bench/`](bench/): fault injection on a real 6,165-test suite. For each injected
-fault, a full-suite run gives the ground truth, and the selectors are measured
-against it.
+[`bench/RESULTS.md`](bench/RESULTS.md): real commits and fault injection on one 6,195-test
+project. For each injected fault, a full-suite run gives the ground truth. Missed files are
+rerun to rule out flaky tests. The harness is in [`bench/`](bench/), so you can run it on
+your own suite.

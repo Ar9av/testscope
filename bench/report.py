@@ -10,7 +10,10 @@ mut_files = [Path(a) for a in args[:args.index("--commits")]]
 
 rows = [json.loads(l) for f in mut_files for l in f.read_text().splitlines()]
 rows = [r for r in rows if "sel" in r]
-flaky = {f for r in rows for f, v in r.get("verdict", {}).items() if v == "flaky"}
+# Flaky everywhere = verified flaky somewhere and never a verified real failure. Per mutant,
+# its own verdicts also apply (a file can fail only in full-suite order for one mutant).
+real_somewhere = {f for r in rows for f, v in r.get("verdict", {}).items() if v == "real"}
+flaky = {f for r in rows for f, v in r.get("verdict", {}).items() if v == "flaky"} - real_somewhere
 sels = ["testscope", "testmon", "imports", "names"]
 
 
@@ -23,7 +26,8 @@ def kind_of(r):
 res = {}
 for kind in ("py", "module", "data", "all"):
     rs = [r for r in rows if kind in ("all", kind_of(r))]
-    rs = [dict(r, real=set(r["truth"]) - flaky) for r in rs]
+    rs = [dict(r, real=set(r["truth"]) - flaky - {f for f, v in r.get("verdict", {}).items() if v == "flaky"})
+          for r in rs]
     hit = [r for r in rs if r["real"]]
     res[kind] = {"mutants": len(rs), "breaking": len(hit)}
     for s in sels:

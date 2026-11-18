@@ -1,0 +1,135 @@
+{
+ "mutants": {
+  "py": {
+   "mutants": 33,
+   "breaking": 20,
+   "testscope": {
+    "caught": 20,
+    "all_files": 19,
+    "of": 20,
+    "median_files": 6
+   },
+   "testmon": {
+    "caught": 18,
+    "all_files": 15,
+    "of": 20,
+    "median_files": 6
+   },
+   "imports": {
+    "caught": 18,
+    "all_files": 17,
+    "of": 20,
+    "median_files": 352
+   },
+   "names": {
+    "caught": 17,
+    "all_files": 7,
+    "of": 20,
+    "median_files": 1
+   }
+  },
+  "module": {
+   "mutants": 9,
+   "breaking": 4,
+   "testscope": {
+    "caught": 3,
+    "all_files": 3,
+    "of": 4,
+    "median_files": 6
+   },
+   "testmon": {
+    "caught": 4,
+    "all_files": 4,
+    "of": 4,
+    "median_files": 7
+   },
+   "imports": {
+    "caught": 4,
+    "all_files": 4,
+    "of": 4,
+    "median_files": 352
+   }
+  },
+  "data": {
+   "mutants": 12,
+   "breaking": 10,
+   "testscope": {
+    "caught": 10,
+    "all_files": 10,
+    "of": 10,
+    "median_files": 10.5
+   },
+   "testmon": {
+    "caught": 0,
+    "all_files": 0,
+    "of": 10,
+    "median_files": 5.0
+   },
+   "imports": {
+    "caught": 0,
+    "all_files": 0,
+    "of": 10,
+    "median_files": 0.0
+   },
+   "names": {
+    "caught": 2,
+    "all_files": 1,
+    "of": 10,
+    "median_files": 0.0
+   }
+  },
+  "all": {
+   "mutants": 54,
+   "breaking": 34,
+   "testscope": {
+    "caught": 33,
+    "all_files": 32,
+    "of": 34,
+    "median_files": 7.0
+   },
+   "testmon": {
+    "caught": 22,
+    "all_files": 19,
+    "of": 34,
+    "median_files": 5.0
+   },
+   "imports": {
+    "caught": 22,
+    "all_files": 21,
+    "of": 34,
+    "median_files": 352.0
+   },
+   "names": {
+    "caught": 19,
+    "all_files": 8,
+    "of": 30,
+    "median_files": 1
+   }
+  }
+ },
+ "commits": {
+  "commits": 30,
+  "total_tests": 6195,
+  "total_files": 378,
+  "testscope": {
+   "median_tests": 353.0,
+   "median_files": 54.5,
+   "mean_tests": 652,
+   "median_s": 4.9
+  },
+  "testmon": {
+   "median_tests": 584.0,
+   "median_files": 76.0,
+   "mean_tests": 836,
+   "median_s": 3.3499999999999996
+  },
+  "imports": {
+   "median_files": 352.0
+  }
+ },
+ "flaky": [
+  "tests/test_copilot_studio.py",
+  "tests/test_lambda_mcp_handler.py",
+  "tests/test_prismor_sink_batching.py"
+ ]
+}
