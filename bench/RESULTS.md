@@ -9,7 +9,7 @@ and the summary is in [`results.json`](results.json).
 The last 30 non-merge commits that touch code, each reverse-applied to the working tree
 against a map recorded at HEAD ([`commits.py`](commits.py)).
 
-| | median tests | mean tests | median test files | selection time (median) |
+| | median tests | mean tests | median test files | `pytest --collect-only` with selection (median) |
 |---|---|---|---|---|
 | Full suite | 6,195 | 6,195 | 378 | - |
 | testscope | 353 | 652 | 54.5 | 4.9 s |
@@ -105,6 +105,24 @@ agent that runs `pytest -x` sees the failure in seconds, not a minute.
 
 Recording adds no measurable cost (run-to-run noise is larger). Measured again with package
 and duration tracking, on an idle machine: plain run 2m13s, record 1m59s.
+
+## Where the time goes
+
+One sample change (one line in one module, 495 tests selected), on the same project:
+
+| step | time |
+|---|---|
+| testscope: load the map (5.4 MB JSON) | 0.03 s |
+| testscope: hash files, compare, pick tests | 0.10 s |
+| `pytest --collect-only` with selection (startup, plugins, collect the selected files) | 2.1 s |
+| `pytest --collect-only`, whole suite, no selection | 19.9 s |
+| run the 495 selected tests, 12 workers | 38 s |
+| run the 495 selected tests, 1 process | 82 s |
+
+testscope's own work is about 0.13 s, under 1% of a selected run. The "collect-only" column
+in the commit table above is pytest startup plus collection of the selected files, not
+testscope logic. A faster core (for example in Rust) would save about 0.1 s per run, so
+testscope stays pure Python.
 
 ## Limits of this evidence
 

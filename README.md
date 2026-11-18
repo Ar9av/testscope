@@ -22,6 +22,7 @@ On a real 6,195-test project, over its last 30 commits:
 | Bad package upgrades caught (4 that break a test) | **4**, running 92 to 2,278 tests | 4, running all 6,195 | 0 |
 | Mean time to first failure with `-x` (same selection) | **4.0 s** fail-first; 21.3 s in pytest's order | not measured | - |
 | Recording overhead on a 3m36s suite | none measured | +23 s | - |
+| Selection time (testscope logic only) | 0.13 s | not measured | - |
 
 Method, caveats and raw data: [`bench/RESULTS.md`](bench/RESULTS.md).
 
