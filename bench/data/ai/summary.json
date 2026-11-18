@@ -150,5 +150,119 @@
    "tests_added_mean": 37,
    "ts_files_median": 53.5
   }
+ },
+ "cli_opus_low": {
+  "calls": 70,
+  "errors": 0,
+  "usd_total": 14.646,
+  "usd_per_call": 0.2092,
+  "usd_per_call_after_first": 0.2507,
+  "seconds_median": 8.3,
+  "seconds_p90": 12.6,
+  "input_tokens_median": 31397.0,
+  "output_tokens_median": 208.5,
+  "union": {
+   "breaking": 21,
+   "caught": 21,
+   "all_files": 20,
+   "files_added_median": 1,
+   "files_added_mean": 2,
+   "added_not_failing_mean": 2.0
+  },
+  "solo": {
+   "breaking": 21,
+   "caught": 21,
+   "all_files": 12,
+   "files_added_median": 3,
+   "files_added_mean": 3.7,
+   "added_not_failing_mean": 2.6
+  },
+  "testscope_alone": {
+   "caught": 21,
+   "all_files": 20
+  },
+  "commits": {
+   "n": 0,
+   "files_added_median": null,
+   "tests_added_median": null,
+   "tests_added_mean": null,
+   "ts_files_median": null
+  }
+ },
+ "codex_cli": {
+  "calls": 54,
+  "errors": 0,
+  "usd_total": 0,
+  "usd_per_call": 0,
+  "usd_per_call_after_first": 0.0,
+  "seconds_median": 10.149999999999999,
+  "seconds_p90": 14.7,
+  "input_tokens_median": 37243.0,
+  "output_tokens_median": 103.5,
+  "union": {
+   "breaking": 0,
+   "caught": 0,
+   "all_files": 0,
+   "files_added_median": null,
+   "files_added_mean": null,
+   "added_not_failing_mean": null
+  },
+  "solo": {
+   "breaking": 34,
+   "caught": 32,
+   "all_files": 23,
+   "files_added_median": 2.0,
+   "files_added_mean": 10.4,
+   "added_not_failing_mean": 8.9
+  },
+  "testscope_alone": {
+   "caught": 34,
+   "all_files": 34
+  },
+  "commits": {
+   "n": 0,
+   "files_added_median": null,
+   "tests_added_median": null,
+   "tests_added_mean": null,
+   "ts_files_median": null
+  }
+ },
+ "opencode_cli": {
+  "calls": 54,
+  "errors": 6,
+  "usd_total": 0,
+  "usd_per_call": 0,
+  "usd_per_call_after_first": 0.0,
+  "seconds_median": 21.75,
+  "seconds_p90": 47.9,
+  "input_tokens_median": 42734.0,
+  "output_tokens_median": 17.0,
+  "union": {
+   "breaking": 0,
+   "caught": 0,
+   "all_files": 0,
+   "files_added_median": null,
+   "files_added_mean": null,
+   "added_not_failing_mean": null
+  },
+  "solo": {
+   "breaking": 31,
+   "caught": 26,
+   "all_files": 14,
+   "files_added_median": 1.0,
+   "files_added_mean": 5.5,
+   "added_not_failing_mean": 4.2
+  },
+  "testscope_alone": {
+   "caught": 34,
+   "all_files": 34
+  },
+  "commits": {
+   "n": 0,
+   "files_added_median": null,
+   "tests_added_median": null,
+   "tests_added_mean": null,
+   "ts_files_median": null
+  }
  }
 }

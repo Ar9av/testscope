@@ -29,7 +29,7 @@ def pytest_addoption(parser):
     g.addoption("--testscope-record", action="store_true", help="run tests and record the dependency map")
     g.addoption("--testscope-off", action="store_true", help="disable testscope selection")
     g.addoption("--testscope-ai", nargs="?", const="anthropic", default=None, metavar="BACKEND",
-                help="no map yet: let an LLM pick test files from the diff (anthropic | claude); "
+                help="no map yet: let an LLM pick test files from the diff (anthropic | claude | codex | opencode | cursor | gemini | qwen | copilot); "
                      "or set TESTSCOPE_AI. Ignored once a map exists.")
 
 

@@ -155,6 +155,8 @@ prices from the API usage fields.
 | solo (no map) | Opus 5.5, medium | 33 | 20 | 3 | - | 0.0127 | 3.3 |
 | solo (no map) | Sonnet 5.5, low | 33 | 21 | 3.5 | - | 0.0052 | 2.1 |
 | solo (no map) | Haiku 5.5, low | 31 | 19 | 3 | - | 0.0005 | 1.7 |
+| solo, Codex CLI (`codex`) | Codex default model, ChatGPT plan login | 32 | 23 | 2 | - | plan | 10.1 |
+| solo, opencode (`opencode`) | opencode's free default model | 26 of 31 | 14 | 1 | - | 0 | 21.8 |
 
 For comparison, without a map: testmon catches 22 (it also needs a recorded DB), and the
 import graph catches 22 at 352 files.
@@ -171,6 +173,11 @@ What this shows:
 - **Cost:** the first call writes the test index to the cache (about $0.15 on Opus 5.5).
   After that, a call is about 1 cent on Opus 5.5 and 0.05 cents on Haiku 5.5. The cache
   lives 5 minutes, so an agent that runs tests every few minutes stays on cache reads.
+- **Other agent CLIs:** `codex`, `opencode`, `cursor`, `gemini`, `qwen` and `copilot` run the
+  CLI read-only in an empty directory and use its own login. Codex (54 calls, no errors) caught
+  32 of 34. opencode on its free default model timed out (300 s) on 6 of 54 calls, so only 31
+  breaking faults count; it caught 26. Cursor, Gemini, Qwen and Copilot are covered by tests
+  against each CLI's documented output, not by this benchmark (not logged in on the test machine).
 - **Claude Code CLI backend (`TESTSCOPE_AI=claude`):** uses the Claude Code login, no API
   key. It works (70 calls, no errors, 8.3 s median). Its prompt cache hit for only a few
   calls and then stopped, so most calls wrote the whole prompt again, $0.25 at list price.

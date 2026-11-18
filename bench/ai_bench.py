@@ -2,7 +2,7 @@
 For each fault: apply it, compute the testscope selection from the map, then ask the model
 twice: 'union' (gets the testscope selection, may only add) and 'solo' (no map, picks alone).
 For each commit: reverse-apply it and ask in 'union' mode only (no ground truth there).
-Usage: python ai_bench.py <repo> <out.jsonl> <backend> <model> <effort> <mutants.jsonl ...> [--commits <commits.jsonl>]
+Usage: python ai_bench.py <repo> <out.jsonl> <backend> <model or -> <effort> <mutants.jsonl ...> [--commits <commits.jsonl>]
 Ground truth and verdicts come from the mutant rows (see run.py, verify.py)."""
 import json, subprocess, sys
 from pathlib import Path
@@ -13,6 +13,8 @@ args = sys.argv[1:]
 commits = Path(args.pop(args.index("--commits") + 1)) if "--commits" in args else None
 args = [a for a in args if a != "--commits"]
 repo, out, backend, model, effort, muts = Path(args[0]), Path(args[1]), args[2], args[3], args[4], args[5:]
+model = None if model == "-" else model  # "-": the CLI's own default model
+MODES = ("solo",)  # union rows in data/ai/ come from an older testscope that had that mode
 MUTANT = 'raise RuntimeError("TIA_MUTANT")'
 m = selection.load_map(str(repo))
 index = ai.test_index(str(repo))
@@ -43,8 +45,9 @@ def ask(sel, s, modes):
     res = {}
     for mode in modes:
         try:
-            add, info = ai.suggest(str(repo), m.get("commit"), s.changed, sel if mode == "union" else set(),
-                                   backend=backend, model=model, effort=effort, index=index)
+            if mode == "union":
+                raise RuntimeError("union mode was removed from testscope")
+            add, info = ai.suggest(str(repo), s.changed, backend=backend, model=model, effort=effort, index=index)
             res[mode] = {"add": sorted(add), "info": info, "tests": sum(by_file.get(f, 0) for f in add)}
         except Exception as e:
             res[mode] = {"error": f"{type(e).__name__}: {e}"[:300]}
@@ -63,7 +66,7 @@ with out.open("w") as fh:
                 sel, s = ts_files()
                 row = {"src": "mutant", "file": r["file"], "func": r.get("func", ""), "kind": r["kind"],
                        "truth": r["truth"], "verdict": r.get("verdict", {}), "ts": sorted(sel or [])}
-                row.update(ask(sel or set(), s, ("union", "solo")))
+                row.update(ask(sel or set(), s, MODES))
             finally:
                 subprocess.run(["git", "checkout", "--", r["file"]], cwd=repo)
             fh.write(json.dumps(row) + "\n")

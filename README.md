@@ -66,10 +66,24 @@ Re-record to reset it.
 ## No map yet? (optional AI pick)
 
 ```bash
-pip install 'testscope[ai]'
-export ANTHROPIC_API_KEY=...        # or TESTSCOPE_AI=claude to use your Claude Code login
-TESTSCOPE_AI=anthropic pytest
+TESTSCOPE_AI=claude pytest          # your coding agent's own login, no API key
+pip install 'testscope[ai]' && TESTSCOPE_AI=anthropic pytest   # or the API, ANTHROPIC_API_KEY
 ```
+
+| `TESTSCOPE_AI=` | runs | auth |
+|---|---|---|
+| `claude` | `claude -p` | Claude Code login |
+| `codex` | `codex exec` | Codex login (ChatGPT plan) or API key |
+| `cursor` | `cursor-agent -p` | Cursor login |
+| `gemini` | `gemini -p` | Google login or `GEMINI_API_KEY` |
+| `copilot` | `copilot -p` | Copilot login |
+| `qwen` | `qwen` | Qwen Code's own auth |
+| `opencode` | `opencode run` | any provider opencode is set up with |
+| `anthropic` | Anthropic API | `ANTHROPIC_API_KEY` |
+
+Each CLI runs read-only in an empty directory, so it sees no project files. `TESTSCOPE_AI_MODEL`
+picks the model. Measured: Claude, Codex and opencode. Cursor, Gemini, Copilot and Qwen are
+tested against their documented output only.
 
 Until a map is recorded, a model reads the diff and a test index and picks the test files
 to run. On the same faults it caught 33 of 34 while it ran about 3 files, for about 1 cent a
