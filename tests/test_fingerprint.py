@@ -22,3 +22,20 @@ def test_decorator_is_part_of_the_function():
 def test_hash_has_no_version_specific_ast_dump():
     # Tokens are the same on every supported Python; a CI map from 3.12 must match 3.14.
     assert fp("def f():\n    return 2\n")["funcs"]["f"] == fp("def f():\n\n    return 2   # x\n")["funcs"]["f"]
+
+
+def test_worktree_falls_back_to_main_map(tmp_path):
+    import json, subprocess
+    from testscope.selection import MAP_VERSION, load_map
+    main, wt = tmp_path / "main", tmp_path / "wt"
+    main.mkdir()
+    git = lambda *a: subprocess.run(["git", *a], cwd=main, check=True, capture_output=True)
+    git("init", "-q"); git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "x")
+    git("worktree", "add", "-q", str(wt))
+    assert load_map(str(wt)) is None
+    (main / ".testscope").mkdir()
+    (main / ".testscope" / "map.json").write_text(json.dumps({"version": MAP_VERSION, "from": "main"}))
+    assert load_map(str(wt))["from"] == "main"
+    (wt / ".testscope").mkdir()
+    (wt / ".testscope" / "map.json").write_text(json.dumps({"version": MAP_VERSION, "from": "wt"}))
+    assert load_map(str(wt))["from"] == "wt"

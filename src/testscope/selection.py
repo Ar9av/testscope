@@ -21,13 +21,35 @@ CANARIES = 5
 SCRIPTS = (".sh", ".bash", ".zsh")
 
 
-def load_map(root: str) -> dict | None:
+def _main_worktree(root: str) -> str | None:
+    """The main checkout when root is a linked git worktree (which has a .git file, not a dir)."""
     try:
-        with open(os.path.join(root, MAP_DIR, "map.json")) as fh:
-            m = json.load(fh)
-    except (OSError, ValueError):
+        with open(os.path.join(root, ".git")) as fh:
+            line = fh.read().strip()  # "gitdir: <main>/.git/worktrees/<name>"
+    except OSError:
         return None
-    return m if m.get("version") == MAP_VERSION else None
+    if not line.startswith("gitdir:"):
+        return None
+    gitdir = os.path.normpath(os.path.join(root, line[7:].strip()))
+    if os.path.basename(os.path.dirname(gitdir)) != "worktrees":
+        return None
+    return os.path.dirname(os.path.dirname(os.path.dirname(gitdir)))
+
+
+def load_map(root: str) -> dict | None:
+    # A fresh worktree has no map of its own; the main checkout's map still works because
+    # selection compares file contents against the map's snapshot, not git history.
+    for base in (root, _main_worktree(root)):
+        if not base:
+            continue
+        try:
+            with open(os.path.join(base, MAP_DIR, "map.json")) as fh:
+                m = json.load(fh)
+        except (OSError, ValueError):
+            continue
+        if m.get("version") == MAP_VERSION:
+            return m
+    return None
 
 
 def installed(tops) -> dict[str, str]:
